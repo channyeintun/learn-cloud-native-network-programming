@@ -527,4 +527,4 @@ func main() {
 ---
 
 ## Next Module
-→ [06-building-the-load-balancer.md](./06-building-the-load-balancer.md): Putting it all together
+→ [06-ebpf-fundamentals.md](./06-ebpf-fundamentals.md): eBPF for high-performance packet processing

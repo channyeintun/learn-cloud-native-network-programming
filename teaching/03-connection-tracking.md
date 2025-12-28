@@ -90,31 +90,39 @@ conntrack -L | grep "mark=2" | wc -l
 
 ### State Transitions
 
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant S as Server
+    
+    rect rgb(230, 245, 255)
+        Note over C,S: TCP Connection
+        C->>S: SYN
+        Note right of C: NEW
+        S->>C: SYN-ACK
+        Note left of S: ESTABLISHED
+        C->>S: ACK
+        Note over C,S: Data exchange - all ESTABLISHED
+        C->>S: FIN
+        S->>C: FIN-ACK
+        C->>S: ACK
+        Note over C,S: Entry removed after timeout
+    end
 ```
-TCP Connection:
-   Client                   Server
-     │                         │
-     │──── SYN ───────────────▶│  NEW
-     │                         │
-     │◀─── SYN-ACK ────────────│  ESTABLISHED
-     │                         │
-     │──── ACK ───────────────▶│  ESTABLISHED
-     │                         │
-     [Data exchange - all ESTABLISHED]
-     │                         │
-     │──── FIN ───────────────▶│
-     │◀─── FIN-ACK ────────────│
-     │──── ACK ───────────────▶│  Entry removed after timeout
 
-
-UDP "Connection":
-   (UDP is stateless, but conntrack creates state)
-     │                         │
-     │──── Request ───────────▶│  NEW
-     │                         │
-     │◀─── Response ───────────│  ESTABLISHED
-     │                         │
-   (Timeout after ~30 seconds of inactivity)
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant S as Server
+    
+    rect rgb(255, 245, 230)
+        Note over C,S: UDP "Connection" (stateless but conntrack creates state)
+        C->>S: Request
+        Note right of C: NEW
+        S->>C: Response
+        Note left of S: ESTABLISHED
+        Note over C,S: Timeout after ~30 seconds of inactivity
+    end
 ```
 
 ---

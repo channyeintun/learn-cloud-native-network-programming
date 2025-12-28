@@ -98,17 +98,21 @@ Routes available:
 
 #### The 3-Way Handshake (Connection Establishment)
 
-```
-Client                    Server
-   |                         |
-   |------ SYN (seq=x) ----->|    1. "I want to connect"
-   |                         |
-   |<--- SYN+ACK (seq=y, -----|    2. "OK, here's my sequence"
-   |         ack=x+1)        |
-   |                         |
-   |------ ACK (ack=y+1) --->|    3. "Got it, let's talk"
-   |                         |
-   [    CONNECTION OPEN      ]
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant S as Server
+    
+    C->>S: SYN (seq=x)
+    Note right of C: 1. "I want to connect"
+    S->>C: SYN+ACK (seq=y, ack=x+1)
+    Note left of S: 2. "OK, here's my sequence"
+    C->>S: ACK (ack=y+1)
+    Note right of C: 3. "Got it, let's talk"
+    
+    rect rgb(200, 230, 200)
+        Note over C,S: CONNECTION OPEN
+    end
 ```
 
 **Why this matters for your load balancer:**
@@ -117,26 +121,18 @@ Switching ISPs mid-connection breaks the TCP state!
 
 #### TCP State Machine
 
-```
-                              ┌─────────────┐
-                              │   CLOSED    │
-                              └──────┬──────┘
-                                     │ SYN sent
-                              ┌──────▼──────┐
-                              │  SYN_SENT   │
-                              └──────┬──────┘
-                                     │ SYN+ACK received
-                              ┌──────▼──────┐
-                              │ ESTABLISHED │ ← Normal data transfer
-                              └──────┬──────┘
-                                     │ FIN sent/received
-                              ┌──────▼──────┐
-                              │   CLOSING   │ (multiple substates)
-                              └──────┬──────┘
-                                     │
-                              ┌──────▼──────┐
-                              │   CLOSED    │
-                              └─────────────┘
+```mermaid
+stateDiagram-v2
+    [*] --> CLOSED
+    CLOSED --> SYN_SENT: SYN sent
+    SYN_SENT --> ESTABLISHED: SYN+ACK received
+    ESTABLISHED --> CLOSING: FIN sent/received
+    CLOSING --> CLOSED: Connection terminated
+    
+    note right of ESTABLISHED
+        Normal data transfer
+        happens here
+    end note
 ```
 
 **Connection tracking states:**
@@ -196,14 +192,13 @@ Switching ISPs mid-connection breaks the TCP state!
 
 **Every connection is uniquely identified by:**
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                        5-TUPLE                               │
-├─────────────┬─────────────┬─────────────┬──────────┬────────┤
-│  Source IP  │ Source Port │   Dest IP   │Dest Port │Protocol│
-├─────────────┼─────────────┼─────────────┼──────────┼────────┤
-│ 10.0.0.50   │   49152     │ 8.8.8.8     │   443    │  TCP   │
-└─────────────┴─────────────┴─────────────┴──────────┴────────┘
+```mermaid
+flowchart LR
+    subgraph tuple["5-TUPLE"]
+        SIP["Source IP<br>10.0.0.50"] --- SPORT["Source Port<br>49152"] --- DIP["Dest IP<br>8.8.8.8"] --- DPORT["Dest Port<br>443"] --- PROTO["Protocol<br>TCP"]
+    end
+    
+    style tuple fill:#e3f2fd
 ```
 
 **Your load balancer will:**

@@ -36,42 +36,22 @@ iptables is organized into **tables** containing **chains** of **rules**.
 
 ### Chain Flow for Forwarded Packets
 
-```
-Incoming packet
-      │
-      ▼
-┌─────────────────────┐
-│ raw PREROUTING      │  (skip conntrack if needed)
-└────────┬────────────┘
-         ▼
-┌─────────────────────┐
-│ mangle PREROUTING   │  ⭐ MARK packets here
-└────────┬────────────┘
-         ▼
-┌─────────────────────┐
-│ nat PREROUTING      │  (DNAT happens here)
-└────────┬────────────┘
-         ▼
-   Routing Decision     ← ip rules check MARK here
-         │
-         ▼
-┌─────────────────────┐
-│ mangle FORWARD      │
-└────────┬────────────┘
-         ▼
-┌─────────────────────┐
-│ filter FORWARD      │  (firewall decision)
-└────────┬────────────┘
-         ▼
-┌─────────────────────┐
-│ mangle POSTROUTING  │
-└────────┬────────────┘
-         ▼
-┌─────────────────────┐
-│ nat POSTROUTING     │  ⭐ MASQUERADE here
-└────────┬────────────┘
-         ▼
-   Outgoing packet
+```mermaid
+flowchart TD
+    IN["Incoming packet"] --> RAW["raw PREROUTING<br>(skip conntrack if needed)"]
+    RAW --> MANGLE_PRE["mangle PREROUTING<br>⭐ MARK packets here"]
+    MANGLE_PRE --> NAT_PRE["nat PREROUTING<br>(DNAT happens here)"]
+    NAT_PRE --> ROUTE{"Routing Decision<br>ip rules check MARK here"}
+    
+    ROUTE --> MANGLE_FWD["mangle FORWARD"]
+    MANGLE_FWD --> FILTER_FWD["filter FORWARD<br>(firewall decision)"]
+    FILTER_FWD --> MANGLE_POST["mangle POSTROUTING"]
+    MANGLE_POST --> NAT_POST["nat POSTROUTING<br>⭐ MASQUERADE here"]
+    NAT_POST --> OUT["Outgoing packet"]
+    
+    style MANGLE_PRE fill:#e8f5e9
+    style NAT_POST fill:#e8f5e9
+    style ROUTE fill:#f3e5f5
 ```
 
 ---

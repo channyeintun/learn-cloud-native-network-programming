@@ -56,42 +56,26 @@ iptables -t nat -A POSTROUTING -o eth0 -j SNAT --to-source <interface-ip>
 
 ## How Packets Flow Through Linux NAT
 
-```
-┌──────────────────────────────────────────────────────────────────┐
-│                        PACKET FLOW                                │
-└──────────────────────────────────────────────────────────────────┘
-
-Incoming Packet
-      │
-      ▼
-┌─────────────┐    ┌─────────────────┐
-│ PREROUTING  │───▶│ Routing Decision│
-│   (DNAT)    │    └────────┬────────┘
-└─────────────┘             │
-                    ┌───────┴───────┐
-                    │               │
-                    ▼               ▼
-            ┌──────────┐    ┌──────────┐
-            │  INPUT   │    │ FORWARD  │
-            │(to local)│    │(to other)│
-            └────┬─────┘    └────┬─────┘
-                 │               │
-                 ▼               ▼
-            Local Process  ┌──────────┐
-                 │         │POSTROUTING│
-                 ▼         │  (SNAT)   │
-            ┌──────────┐   └────┬─────┘
-            │  OUTPUT  │        │
-            └────┬─────┘        ▼
-                 │         Outgoing Packet
-                 ▼
-            ┌──────────┐
-            │POSTROUTING│
-            │  (SNAT)   │
-            └────┬─────┘
-                 │
-                 ▼
-            Outgoing Packet
+```mermaid
+flowchart TD
+    IN["Incoming Packet"] --> PRE["PREROUTING<br>(DNAT)"]
+    PRE --> ROUTE{"Routing Decision"}
+    
+    ROUTE -->|"Local"| INPUT["INPUT<br>(to local)"]
+    ROUTE -->|"Forward"| FWD["FORWARD<br>(to other)"]
+    
+    INPUT --> LOCAL["Local Process"]
+    LOCAL --> OUTPUT["OUTPUT"]
+    OUTPUT --> POST1["POSTROUTING<br>(SNAT)"]
+    POST1 --> OUT1["Outgoing Packet"]
+    
+    FWD --> POST2["POSTROUTING<br>(SNAT)"]
+    POST2 --> OUT2["Outgoing Packet"]
+    
+    style PRE fill:#fff3e0
+    style POST1 fill:#e8f5e9
+    style POST2 fill:#e8f5e9
+    style ROUTE fill:#f3e5f5
 ```
 
 **For your load balancer:**
