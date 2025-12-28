@@ -1,5 +1,11 @@
 # Module 6: eBPF Fundamentals
 
+## 📊 Visual Learning
+
+![eBPF Architecture](./images/ebpf_architecture.png)
+
+![XDP Hook Points](./images/xdp_hook_points.png)
+
 ## What is eBPF?
 
 eBPF (extended Berkeley Packet Filter) is a **revolutionary technology** that allows you to run sandboxed programs inside the Linux kernel without modifying kernel source code or loading kernel modules.

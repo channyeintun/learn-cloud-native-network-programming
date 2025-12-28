@@ -12,6 +12,10 @@ Without connection tracking:
 
 **Connection tracking (conntrack)** is Linux's solution.
 
+## 📊 Visual Learning
+
+![Connection Tracking States](./images/conntrack_states.png)
+
 ---
 
 ## What is conntrack?

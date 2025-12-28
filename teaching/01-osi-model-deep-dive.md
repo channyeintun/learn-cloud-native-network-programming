@@ -8,6 +8,12 @@ Your multi-WAN load balancer operates primarily at:
 
 Understanding these layers is **essential** for packet manipulation.
 
+## 📊 Visual Learning
+
+![OSI Model Layers](./images/osi_model_layers.png)
+
+![TCP 3-Way Handshake](./images/tcp_handshake_visual.png)
+
 ---
 
 ## The OSI Model Quick Reference

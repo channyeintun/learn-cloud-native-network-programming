@@ -1,5 +1,9 @@
 # Module 4: iptables Mastery for Load Balancing
 
+## 📊 Visual Learning
+
+![iptables Chains and Tables](./images/iptables_chains.png)
+
 ## iptables Architecture Overview
 
 iptables is organized into **tables** containing **chains** of **rules**.

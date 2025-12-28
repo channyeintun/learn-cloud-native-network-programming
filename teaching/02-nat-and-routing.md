@@ -9,6 +9,12 @@ The internet uses **public IPs**.
 
 Your multi-WAN load balancer **must** handle NAT correctly on both ISP connections!
 
+## 📊 Visual Learning
+
+![NAT Translation](./images/nat_translation.png)
+
+![Linux Packet Flow](./images/linux_packet_flow.png)
+
 ---
 
 ## Types of NAT
