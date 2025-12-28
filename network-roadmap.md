@@ -149,27 +149,31 @@ for {
 
 **What is eBPF?**
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                         User Space                               │
-│  ┌─────────────┐    ┌─────────────┐    ┌─────────────────────┐ │
-│  │  Your Go    │───→│ eBPF Loader │───→│  eBPF Maps          │ │
-│  │  Program    │←───│ (cilium/ebpf)│←───│  (shared data)      │ │
-│  └─────────────┘    └──────┬──────┘    └─────────────────────┘ │
-│                            │                     ↑               │
-├────────────────────────────┼─────────────────────┼───────────────┤
-│                         Kernel                   │               │
-│                            ↓                     │               │
-│  ┌──────────────────────────────────────────────┴─────────────┐ │
-│  │                    eBPF Virtual Machine                     │ │
-│  │  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────────┐   │ │
-│  │  │ XDP     │  │ TC      │  │ Socket  │  │ Tracepoints │   │ │
-│  │  │ (L2)    │  │ (L3)    │  │ Filters │  │ & kprobes   │   │ │
-│  │  └─────────┘  └─────────┘  └─────────┘  └─────────────┘   │ │
-│  └─────────────────────────────────────────────────────────────┘ │
-│                                                                   │
-│  Network Stack ←──────── Hook Points ──────────→ Tracing         │
-└─────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph userspace["User Space"]
+        GO["Your Go Program"] --> LOADER["eBPF Loader<br>(cilium/ebpf)"]
+        LOADER <--> MAPS_US["eBPF Maps<br>(shared data)"]
+    end
+    
+    subgraph kernel["Kernel"]
+        LOADER --> VM["eBPF Virtual Machine"]
+        
+        subgraph hooks["Hook Points"]
+            XDP["XDP<br>(L2)"]
+            TC["TC<br>(L3)"]
+            SOCK["Socket<br>Filters"]
+            TRACE["Tracepoints<br>& kprobes"]
+        end
+        
+        VM --> hooks
+        VM <--> MAPS_K["eBPF Maps"]
+        MAPS_K <-.-> MAPS_US
+    end
+    
+    style userspace fill:#e3f2fd
+    style kernel fill:#fff3e0
+    style hooks fill:#c8e6c9
 ```
 
 **eBPF Hook Points for Networking:**
@@ -242,14 +246,14 @@ XDP_ABORTED // Error, drop with trace
 
 **Project: XDP Load Balancer**
 
-```
-                    ┌─────────────────────┐
-                    │   XDP Load Balancer │
-   Clients ────────→│                     │────────→ Backend 1
-                    │  - Hash by 5-tuple  │────────→ Backend 2
-                    │  - IPIP/GUE encap   │────────→ Backend 3
-                    │  - Connection track │
-                    └─────────────────────┘
+```mermaid
+flowchart LR
+    CLIENTS["Clients"] --> LB["XDP Load Balancer<br>- Hash by 5-tuple<br>- IPIP/GUE encap<br>- Connection track"]
+    LB --> B1["Backend 1"]
+    LB --> B2["Backend 2"]
+    LB --> B3["Backend 3"]
+    
+    style LB fill:#e8f5e9
 ```
 
 **Implementation approach:**
@@ -305,33 +309,27 @@ int xdp_lb(struct xdp_md *ctx) {
 
 **Kubernetes Networking Model:**
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                         Kubernetes Node                         │
-│                                                                  │
-│  ┌──────────────────┐         ┌──────────────────┐             │
-│  │ Pod A (10.0.1.5) │         │ Pod B (10.0.1.6) │             │
-│  │ ┌──────────────┐ │         │ ┌──────────────┐ │             │
-│  │ │ Container    │ │         │ │ Container    │ │             │
-│  │ │   eth0       │ │         │ │   eth0       │ │             │
-│  │ └──────┬───────┘ │         │ └──────┬───────┘ │             │
-│  │        │ veth    │         │        │ veth    │             │
-│  └────────┼─────────┘         └────────┼─────────┘             │
-│           │                            │                        │
-│           └──────────┬─────────────────┘                        │
-│                      │                                          │
-│              ┌───────▼───────┐                                  │
-│              │  CNI Plugin   │  (Cilium, Calico, Flannel)      │
-│              │  - IP assign  │                                  │
-│              │  - Routing    │                                  │
-│              │  - Policy     │                                  │
-│              └───────┬───────┘                                  │
-│                      │                                          │
-│              ┌───────▼───────┐                                  │
-│              │ Node Network  │                                  │
-│              │  (eBPF/iptables)                                │
-│              └───────────────┘                                  │
-└─────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph node["Kubernetes Node"]
+        subgraph poda["Pod A (10.0.1.5)"]
+            CA["Container<br>eth0"]
+        end
+        
+        subgraph podb["Pod B (10.0.1.6)"]
+            CB["Container<br>eth0"]
+        end
+        
+        CA -->|veth| CNI
+        CB -->|veth| CNI
+        
+        CNI["CNI Plugin<br>(Cilium, Calico, Flannel)<br>- IP assign<br>- Routing<br>- Policy"]
+        CNI --> NET["Node Network<br>(eBPF/iptables)"]
+    end
+    
+    style poda fill:#e3f2fd
+    style podb fill:#e3f2fd
+    style CNI fill:#c8e6c9
 ```
 
 **CNI Plugin Development:**
