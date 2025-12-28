@@ -32,20 +32,23 @@ Cloud-native networking is the **hottest area** in infrastructure today:
 
 **Key Concepts:**
 
-```
-Packet Journey Through Linux Kernel:
-                                          
-   NIC → Driver → XDP Hook → tc ingress → netfilter/iptables
-                                               ↓
-                                          Routing Decision
-                                               ↓
-                              ┌────────────────┴────────────────┐
-                              ↓                                 ↓
-                         Local Delivery                    Forward
-                              ↓                                 ↓
-                         Socket Layer                   tc egress → NIC
-                              ↓
-                         Application
+```mermaid
+flowchart TD
+    subgraph ingress["Ingress Path"]
+        NIC["NIC"] --> Driver --> XDP["XDP Hook"] --> TC_IN["tc ingress"] --> NF["netfilter/iptables"]
+    end
+    
+    NF --> ROUTE{"Routing Decision"}
+    
+    ROUTE -->|"Local"| LOCAL["Local Delivery"]
+    ROUTE -->|"Forward"| FWD["Forward"]
+    
+    LOCAL --> SOCKET["Socket Layer"] --> APP["Application"]
+    FWD --> TC_OUT["tc egress"] --> NIC_OUT["NIC"]
+    
+    style XDP fill:#e1f5fe
+    style NF fill:#fff3e0
+    style ROUTE fill:#f3e5f5
 ```
 
 **Topics:**

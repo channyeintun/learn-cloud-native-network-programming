@@ -6,38 +6,24 @@ eBPF (extended Berkeley Packet Filter) is a **revolutionary technology** that al
 
 ### Why eBPF Matters
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                    Traditional Approach                         │
-│                                                                  │
-│  User Space ────────────────────────────────────────────────────│
-│       │                                                          │
-│       │ (context switch - SLOW)                                 │
-│       ▼                                                          │
-│  Kernel Space ──────────────────────────────────────────────────│
-│       │                                                          │
-│       │ Modify kernel or load kernel module                     │
-│       │ (dangerous, complex, requires reboot)                   │
-│       ▼                                                          │
-│  Network Stack ─────────────────────────────────────────────────│
-└─────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────┐
-│                      eBPF Approach                               │
-│                                                                  │
-│  User Space ────────────────────────────────────────────────────│
-│       │ Your Go program loads eBPF bytecode                     │
-│       ▼                                                          │
-│  eBPF Verifier ─────────────────────────────────────────────────│
-│       │ Validates safety (no crashes, no infinite loops)        │
-│       ▼                                                          │
-│  JIT Compiler ──────────────────────────────────────────────────│
-│       │ Compiles to native machine code (FAST)                  │
-│       ▼                                                          │
-│  Kernel Hooks ──────────────────────────────────────────────────│
-│       XDP, TC, Socket, Tracepoints, etc.                        │
-│       (runs at line rate, no context switch)                    │
-└─────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph traditional["Traditional Approach"]
+        direction TB
+        T_USER["User Space"] -->|"context switch - SLOW"| T_KERNEL["Kernel Space"]
+        T_KERNEL -->|"Modify kernel or load module<br>(dangerous, requires reboot)"| T_NET["Network Stack"]
+    end
+    
+    subgraph ebpf["eBPF Approach"]
+        direction TB
+        E_USER["User Space<br>(Your Go program)"] -->|"Load eBPF bytecode"| E_VERIFY["eBPF Verifier"]
+        E_VERIFY -->|"Validates safety"| E_JIT["JIT Compiler"]
+        E_JIT -->|"Native machine code"| E_HOOKS["Kernel Hooks<br>(XDP, TC, Socket, etc.)"]
+    end
+    
+    style traditional fill:#ffebee
+    style ebpf fill:#e8f5e9
+    style E_HOOKS fill:#c8e6c9
 ```
 
 ---
@@ -46,48 +32,40 @@ eBPF (extended Berkeley Packet Filter) is a **revolutionary technology** that al
 
 ### The Big Picture
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                           USER SPACE                                 │
-│                                                                      │
-│   ┌──────────────┐    ┌──────────────┐    ┌───────────────────┐    │
-│   │   Your Go    │    │   bpftool    │    │  Prometheus/      │    │
-│   │   Program    │    │   (debug)    │    │  Grafana          │    │
-│   └──────┬───────┘    └──────────────┘    └───────────────────┘    │
-│          │                                          ▲               │
-│          │ Load eBPF                                │ Read maps     │
-│          │ program                                  │               │
-│          ▼                                          │               │
-│   ┌──────────────┐                    ┌─────────────┴──────────┐   │
-│   │ cilium/ebpf  │                    │      eBPF Maps         │   │
-│   │  (loader)    │                    │  (shared memory)       │   │
-│   └──────┬───────┘                    └────────────▲───────────┘   │
-│          │                                         │               │
-├──────────┼─────────────────────────────────────────┼───────────────┤
-│          │              KERNEL SPACE               │               │
-│          ▼                                         │               │
-│   ┌──────────────┐                                 │               │
-│   │   Verifier   │ ← Rejects unsafe programs      │               │
-│   └──────┬───────┘                                 │               │
-│          ▼                                         │               │
-│   ┌──────────────┐                                 │               │
-│   │ JIT Compiler │ ← Compiles to native code      │               │
-│   └──────┬───────┘                                 │               │
-│          ▼                                         │               │
-│   ┌──────────────────────────────────────┐        │               │
-│   │           eBPF Virtual Machine        │────────┘               │
-│   │                                       │                        │
-│   │  ┌─────┐  ┌────┐  ┌────────┐  ┌────┐ │                        │
-│   │  │ XDP │  │ TC │  │ Socket │  │kprobe                        │
-│   │  └─────┘  └────┘  └────────┘  └────┘ │                        │
-│   │      Hook Points (attach your code)  │                        │
-│   └──────────────────────────────────────┘                        │
-│                                                                    │
-│   ┌────────────────────────────────────────────────────────────┐  │
-│   │                    Network Stack                            │  │
-│   │  Packet → XDP → TC → Netfilter → Routing → Socket → App   │  │
-│   └────────────────────────────────────────────────────────────┘  │
-└────────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph userspace["USER SPACE"]
+        GO["Your Go Program"] --> LOADER["cilium/ebpf loader"]
+        BPFTOOL["bpftool (debug)"]
+        PROM["Prometheus/Grafana"]
+        MAPS_US["eBPF Maps<br>(shared memory)"]
+        PROM -.->|"Read maps"| MAPS_US
+    end
+    
+    subgraph kernel["KERNEL SPACE"]
+        LOADER --> VERIFIER["Verifier"]
+        VERIFIER -->|"Rejects unsafe"| JIT["JIT Compiler"]
+        JIT --> VM["eBPF Virtual Machine"]
+        
+        subgraph hooks["Hook Points"]
+            XDP["XDP"]
+            TC["TC"]
+            SOCKET["Socket"]
+            KPROBE["kprobe"]
+        end
+        
+        VM --> hooks
+        VM <-->|"Read/Write"| MAPS_K["eBPF Maps"]
+        MAPS_K <-.-> MAPS_US
+    end
+    
+    subgraph netstack["Network Stack"]
+        PACKET["Packet"] --> XDP2["XDP"] --> TC2["TC"] --> NETFILTER["Netfilter"] --> ROUTING["Routing"] --> SOCK["Socket"] --> APP["App"]
+    end
+    
+    style userspace fill:#e3f2fd
+    style kernel fill:#fff3e0
+    style hooks fill:#c8e6c9
 ```
 
 ### eBPF Hook Points for Networking
