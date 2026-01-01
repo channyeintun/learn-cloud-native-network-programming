@@ -579,7 +579,7 @@ myproject/
 
 ### Communities
 - eBPF Slack: https://ebpf.io/slack
-- Cilium Slack: https://cilium.io/slack
+- Cilium Slack: https://cilium.slack.com
 - CNCF Slack: https://slack.cncf.io
 - r/kubernetes, r/golang
 

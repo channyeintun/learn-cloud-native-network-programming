@@ -836,6 +836,8 @@ sudo bpftrace -e 'kprobe:tcp_rcv_established { @ns = hist(nsecs); }'
 
 ### Additional Resources
 
+- [Learning eBPF - GitHub Companion](https://github.com/lizrice/learning-ebpf) - Code examples from Liz Rice's book
+- [Lima VM](https://github.com/lima-vm/lima) - Linux VMs on macOS (recommended for running eBPF)
 - [eBPF.io](https://ebpf.io) - Official eBPF site
 - [cilium/ebpf documentation](https://pkg.go.dev/github.com/cilium/ebpf) - Go library docs
 - [XDP Tutorial](https://github.com/xdp-project/xdp-tutorial) - Hands-on XDP exercises
