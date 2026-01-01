@@ -6,6 +6,52 @@
 
 ![XDP Hook Points](./images/xdp_hook_points.png)
 
+## What is the Linux Kernel?
+
+Before understanding eBPF, it's essential to understand **what the kernel is** and why running code inside it is so powerful.
+
+### 📊 Visual Overview
+
+![Linux Kernel Architecture](./images/linux_kernel_overview.png)
+
+### The Kernel Explained
+
+The **Linux kernel** is the core of the operating system—it's the **bridge between your applications and the hardware**. Think of it as the central control system that manages everything.
+
+| Layer | Description | Examples |
+|-------|-------------|----------|
+| **User Space** | Where your applications run | Browsers, servers, containers, your Go programs |
+| **Kernel Space** | Privileged core of the OS | Process scheduler, network stack, device drivers |
+| **Hardware** | Physical components | CPU, RAM, Network cards, Storage |
+
+### What the Kernel Does
+
+1. **Process Management** - Schedules which programs run on the CPU
+2. **Memory Management** - Allocates and protects memory for each process
+3. **Device Drivers** - Communicates with hardware (disks, network cards, etc.)
+4. **Network Stack** - Handles all network traffic (the focus of this course!)
+5. **File Systems** - Manages how data is stored and retrieved
+
+### Why Kernel Access Matters for Networking
+
+```
+Traditional networking:
+
+    Packet → Network Card → Kernel → iptables → Routing → Socket → Your App
+                                ↑
+                        Every packet goes through
+                        kernel's network stack
+```
+
+**The problem:** When you need to customize network behavior, you traditionally had two options:
+
+1. **User space processing** - Slow context switches between kernel and your app
+2. **Kernel modules** - Dangerous, requires recompilation, can crash the system
+
+**eBPF changes this** - it lets you run **safe**, **fast** code inside the kernel!
+
+---
+
 ## What is eBPF?
 
 eBPF (extended Berkeley Packet Filter) is a **revolutionary technology** that allows you to run sandboxed programs inside the Linux kernel without modifying kernel source code or loading kernel modules.
@@ -780,8 +826,17 @@ sudo bpftrace -e 'kprobe:tcp_rcv_established { @ns = hist(nsecs); }'
 
 ## Resources
 
-- [Learning eBPF](https://www.oreilly.com/library/view/learning-ebpf/9781098135119/) by Liz Rice
-- [eBPF.io](https://ebpf.io)
-- [cilium/ebpf documentation](https://pkg.go.dev/github.com/cilium/ebpf)
-- [XDP Tutorial](https://github.com/xdp-project/xdp-tutorial)
-- [Brendan Gregg's eBPF page](https://www.brendangregg.com/ebpf.html)
+### 📚 Primary Learning Resource
+
+> **"Learning eBPF" by Liz Rice** - You have this book locally!
+> 
+> 📖 **Location:** `Learning eBPF New Version.pdf` (in the project root)
+> 
+> This is the **essential companion** to this module. Work through chapters 1-6 alongside the exercises here.
+
+### Additional Resources
+
+- [eBPF.io](https://ebpf.io) - Official eBPF site
+- [cilium/ebpf documentation](https://pkg.go.dev/github.com/cilium/ebpf) - Go library docs
+- [XDP Tutorial](https://github.com/xdp-project/xdp-tutorial) - Hands-on XDP exercises
+- [Brendan Gregg's eBPF page](https://www.brendangregg.com/ebpf.html) - Performance insights

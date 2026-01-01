@@ -1,5 +1,15 @@
 # Quick Reference - Cloud-Native Network Programming
 
+## 📊 Complete Concept Overview
+
+![Network Concepts Overview](./images/network_concepts_overview.png)
+
+## 📚 Primary eBPF Resource
+
+> **"Learning eBPF" by Liz Rice** → `Learning eBPF New Version.pdf` (project root)
+
+---
+
 ## Linux Networking Commands
 
 ### Network Namespaces

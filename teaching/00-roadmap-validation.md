@@ -4,6 +4,12 @@
 
 Your new roadmap focuses on building cloud networking tools using **eBPF, XDP, and Kubernetes networking**.
 
+## 📊 Complete Concept Overview
+
+![Network Concepts Overview](./images/network_concepts_overview.png)
+
+*This visual shows how all concepts connect together across the 6 teaching modules.*
+
 ---
 
 ## Current Knowledge Assessment
