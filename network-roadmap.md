@@ -20,6 +20,109 @@ Cloud-native networking is the **hottest area** in infrastructure today:
 
 ---
 
+## The Big Picture: Software Defined Networking (SDN)
+
+Before diving into implementation, understand this core abstraction that underpins everything in this roadmap:
+
+**SDN separates the brain (control plane) from the muscle (data plane).**
+
+```mermaid
+flowchart TB
+    subgraph control["Control Plane (The Brain)"]
+        direction TB
+        K8S["Kubernetes API Server"]
+        CTRL["SDN Controller<br>(Cilium Agent, Calico, etc.)"]
+        POLICY["Network Policies<br>& Configuration"]
+        K8S --> CTRL
+        POLICY --> CTRL
+    end
+    
+    subgraph data["Data Plane (The Muscle)"]
+        direction TB
+        EBPF["eBPF Programs"]
+        XDP["XDP"]
+        TC["TC (Traffic Control)"]
+        IPTABLES["iptables / nftables"]
+        KPROXY["kube-proxy"]
+    end
+    
+    CTRL -->|"Programs & Rules"| data
+    data -->|"Metrics & Events"| CTRL
+    
+    style control fill:#e3f2fd
+    style data fill:#c8e6c9
+```
+
+![SDN Architecture Overview](teaching/images/network_concepts_overview_sdn.png)
+
+### Why This Abstraction Matters
+
+| Traditional Networking | Software Defined Networking |
+|------------------------|----------------------------|
+| Config lives on each device | Centralized, programmable control |
+| Manual, error-prone changes | Automated, API-driven |
+| Vendor-specific CLIs | Open, standard interfaces |
+| Static, slow to adapt | Dynamic, responds to workload changes |
+
+### How Your Learning Map Connects to SDN
+
+Everything you'll learn fits into this paradigm:
+
+| SDN Layer | What You'll Learn | Purpose |
+|-----------|-------------------|---------|
+| **Control Plane** | Kubernetes, CNI plugins, Cilium Agent | Decision-making: "where should traffic go?" |
+| **Data Plane** | eBPF, XDP, TC, iptables | Execution: actually moving packets |
+| **Programmability** | Go + cilium/ebpf library | How control plane programs data plane |
+| **Observability** | eBPF tracing, metrics | Feedback loop from data plane to control |
+
+> **Key Insight:** When you write an XDP program, you're programming the SDN data plane. When you build a CNI plugin, you're building SDN control plane logic. The implementations fade from memory, but this mental model stays.
+
+### How SDN Came to Be
+
+![SDN Evolution Timeline](teaching/images/sdn_evolution_history.png)
+
+**The Problem SDN Solved:**
+
+In traditional networking, every device (router, switch, firewall) had its own brain bundled with its muscle. This meant:
+- Vendor lock-in with proprietary CLIs
+- Manual configuration across dozens of devices
+- Slow, error-prone changes
+
+**The Three Eras:**
+
+| Era | Years | Key Idea | Limitation |
+|-----|-------|----------|------------|
+| **Traditional** | 1990s-2007 | Brain + muscle in same box | Vendor lock-in, manual config |
+| **OpenFlow SDN** | 2008-2015 | Extract brain to central controller | Required special hardware |
+| **eBPF SDN** | 2016+ | Brain programmable in Linux kernel | None—this is what you're learning! |
+
+**Key Milestones:**
+- **2008:** Stanford creates OpenFlow protocol
+- **2011:** Open Networking Foundation formed (Google, Facebook, Microsoft)
+- **2012:** Google reveals they run SDN in production (B4 network)
+- **2016+:** eBPF matures, Cilium brings SDN to Kubernetes
+
+> **Why eBPF wins:** Original SDN needed special OpenFlow hardware. eBPF runs on *any* Linux kernel—no special hardware required. This is why your roadmap focuses on eBPF.
+
+### Why Containers Demanded eBPF
+
+The evolution of compute (physical → VMs → containers) *drove* the evolution of networking:
+
+![Compute and Networking Evolution](teaching/images/compute_networking_evolution.png)
+
+| Compute Era | Scale | Networking Challenge | Solution |
+|-------------|-------|---------------------|----------|
+| **Physical** (1990s) | 1 IP per server | Few machines, static | Traditional switches |
+| **VMs** (2005+) | 50 VMs per host, migrate | Network must follow VMs | SDN, vSwitch (software) |
+| **Containers** (2013+) | 1000s per host, ephemeral | Instant networking, massive scale | eBPF in kernel |
+
+> **The Pattern:** Networking moved *up the stack* as compute virtualized deeper.  
+> Hardware switches → Hypervisor vSwitches → Linux kernel (eBPF)
+
+This is why Kubernetes networking uses eBPF (Cilium)—containers are too fast and too many for anything else.
+
+---
+
 ## PART I: LEARNING ROADMAP
 
 ### Phase 1: Linux Networking Deep Dive (2-3 weeks)
