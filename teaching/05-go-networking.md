@@ -1,5 +1,21 @@
 # Module 5: Go Network Programming
 
+## 🧪 Hands-On Exercises
+
+> **Practice with real code!** Instead of just reading examples, run actual Go programs:
+
+| Exercise | What You'll Build | Command |
+|----------|-------------------|---------|
+| [01-tcp-echo](../exercises/01-tcp-echo) | Concurrent TCP server | `go run ./exercises/01-tcp-echo` |
+| [02-udp-server](../exercises/02-udp-server) | UDP echo with stats | `go run ./exercises/02-udp-server` |
+| [03-port-scanner](../exercises/03-port-scanner) | Concurrent scanner | `go run ./exercises/03-port-scanner -host localhost` |
+| [04-icmp-ping](../exercises/04-icmp-ping) | ICMP ping tool | `sudo go run ./exercises/04-icmp-ping -host 8.8.8.8` |
+| [05-health-checker](../exercises/05-health-checker) | HTTP health monitor | `go run ./exercises/05-health-checker` |
+
+📂 **Location:** `exercises/` directory in project root
+
+---
+
 ## Essential Packages Overview
 
 ```go
