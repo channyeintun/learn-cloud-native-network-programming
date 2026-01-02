@@ -53,9 +53,9 @@ flowchart TD
     MANGLE_POST --> NAT_POST["nat POSTROUTING<br>⭐ MASQUERADE here"]
     NAT_POST --> OUT["Outgoing packet"]
     
-    style MANGLE_PRE fill:#e8f5e9
-    style NAT_POST fill:#e8f5e9
-    style ROUTE fill:#f3e5f5
+    style MANGLE_PRE fill:#e8f5e9,color:#1a1a2e
+    style NAT_POST fill:#e8f5e9,color:#1a1a2e
+    style ROUTE fill:#f3e5f5,color:#1a1a2e
 ```
 
 ---

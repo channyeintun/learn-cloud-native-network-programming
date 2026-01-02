@@ -28,7 +28,7 @@ flowchart TB
         SOURCE --> |"❌ WRONG!"| K3
     end
     
-    style problem fill:#ffebee
+    style problem fill:#ffebee,color:#1a1a2e
 ```
 
 Every time the kernel changes a structure layout, your eBPF program breaks!
@@ -54,7 +54,7 @@ flowchart TB
         LIBBPF --> K3B
     end
     
-    style solution fill:#e8f5e9
+    style solution fill:#e8f5e9,color:#1a1a2e
 ```
 
 ---

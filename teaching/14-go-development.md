@@ -37,7 +37,7 @@ flowchart LR
     GO --> LINK
     GO --> EVENT
     
-    style lib fill:#e8f5e9
+    style lib fill:#e8f5e9,color:#1a1a2e
 ```
 
 ---

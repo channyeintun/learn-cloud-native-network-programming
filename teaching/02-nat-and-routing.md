@@ -78,10 +78,10 @@ flowchart TD
     FWD --> POST2["POSTROUTING<br>(SNAT)"]
     POST2 --> OUT2["Outgoing Packet"]
     
-    style PRE fill:#fff3e0
-    style POST1 fill:#e8f5e9
-    style POST2 fill:#e8f5e9
-    style ROUTE fill:#f3e5f5
+    style PRE fill:#fff3e0,color:#1a1a2e
+    style POST1 fill:#e8f5e9,color:#1a1a2e
+    style POST2 fill:#e8f5e9,color:#1a1a2e
+    style ROUTE fill:#f3e5f5,color:#1a1a2e
 ```
 
 **For your load balancer:**

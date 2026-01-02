@@ -25,7 +25,7 @@ flowchart LR
     KERNEL["Kernel Space"] <--> MAP[(eBPF Map)]
     MAP <--> USER["User Space"]
     
-    style MAP fill:#e8f5e9
+    style MAP fill:#e8f5e9,color:#1a1a2e
 ```
 
 ---
@@ -179,8 +179,8 @@ flowchart TB
         A4["❌ Wastes memory if sparse"]
     end
     
-    style hash fill:#e3f2fd
-    style array fill:#fff3e0
+    style hash fill:#e3f2fd,color:#1a1a2e
+    style array fill:#fff3e0,color:#1a1a2e
 ```
 
 ---
@@ -293,8 +293,8 @@ flowchart TB
         R4["Single poll point"]
     end
     
-    style perf fill:#ffebee
-    style ring fill:#e8f5e9
+    style perf fill:#ffebee,color:#1a1a2e
+    style ring fill:#e8f5e9,color:#1a1a2e
 ```
 
 ### Ring Buffer in eBPF

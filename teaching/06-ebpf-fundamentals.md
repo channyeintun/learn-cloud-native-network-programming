@@ -73,9 +73,9 @@ flowchart TB
         E_JIT -->|"Native machine code"| E_HOOKS["Kernel Hooks<br>(XDP, TC, Socket, etc.)"]
     end
     
-    style traditional fill:#ffebee
-    style ebpf fill:#e8f5e9
-    style E_HOOKS fill:#c8e6c9
+    style traditional fill:#ffebee,color:#1a1a2e
+    style ebpf fill:#e8f5e9,color:#1a1a2e
+    style E_HOOKS fill:#c8e6c9,color:#1a1a2e
 ```
 
 ---
@@ -115,9 +115,9 @@ flowchart TB
         PACKET["Packet"] --> XDP2["XDP"] --> TC2["TC"] --> NETFILTER["Netfilter"] --> ROUTING["Routing"] --> SOCK["Socket"] --> APP["App"]
     end
     
-    style userspace fill:#e3f2fd
-    style kernel fill:#fff3e0
-    style hooks fill:#c8e6c9
+    style userspace fill:#e3f2fd,color:#1a1a2e
+    style kernel fill:#fff3e0,color:#1a1a2e
+    style hooks fill:#c8e6c9,color:#1a1a2e
 ```
 
 ### eBPF Hook Points for Networking

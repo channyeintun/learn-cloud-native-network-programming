@@ -67,9 +67,9 @@ flowchart TB
     NF_FWD --> NF_POST
     NF_POST -->|"Egress"| TC_OUT["TC Egress"]
     
-    style xdp_layer fill:#e8f5e9
-    style kernel fill:#e3f2fd
-    style socket fill:#fff3e0
+    style xdp_layer fill:#e8f5e9,color:#1a1a2e
+    style kernel fill:#e3f2fd,color:#1a1a2e
+    style socket fill:#fff3e0,color:#1a1a2e
 ```
 
 ### Egress Path
@@ -87,7 +87,7 @@ flowchart TB
     QDISC --> DRV["Driver"]
     DRV --> NIC["NIC"]
     
-    style TC_EGRESS fill:#fff3e0
+    style TC_EGRESS fill:#fff3e0,color:#1a1a2e
 ```
 
 ---
@@ -125,8 +125,8 @@ flowchart TB
     Q3 -->|"Yes"| TC
     Q3 -->|"No"| XDP
     
-    style XDP fill:#e8f5e9
-    style TC fill:#fff3e0
+    style XDP fill:#e8f5e9,color:#1a1a2e
+    style TC fill:#fff3e0,color:#1a1a2e
 ```
 
 ### XDP Modes
@@ -435,8 +435,8 @@ flowchart TB
     REWRITE --> B2
     REWRITE --> B3
     
-    style lb fill:#e8f5e9
-    style maps fill:#e3f2fd
+    style lb fill:#e8f5e9,color:#1a1a2e
+    style maps fill:#e3f2fd,color:#1a1a2e
 ```
 
 ### Load Balancer Implementation

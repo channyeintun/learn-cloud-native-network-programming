@@ -34,8 +34,8 @@ flowchart LR
         EBPF --> DYNAMIC
     end
     
-    style problem fill:#ffebee
-    style solution fill:#e8f5e9
+    style problem fill:#ffebee,color:#1a1a2e
+    style solution fill:#e8f5e9,color:#1a1a2e
 ```
 
 ---
@@ -89,10 +89,10 @@ flowchart TB
         MOVE["Data Movement\nmov (register)\nld imm (immediate)"]
     end
     
-    style ALU fill:#e3f2fd
-    style MEM fill:#fff3e0
-    style JUMP fill:#f3e5f5
-    style MOVE fill:#e8f5e9
+    style ALU fill:#e3f2fd,color:#1a1a2e
+    style MEM fill:#fff3e0,color:#1a1a2e
+    style JUMP fill:#f3e5f5,color:#1a1a2e
+    style MOVE fill:#e8f5e9,color:#1a1a2e
 ```
 
 ### Instruction Format
@@ -173,9 +173,9 @@ flowchart TD
     PASS -->|Yes| JIT["JIT Compile"]
     PASS -->|No| REJECT["Reject with Error"]
     
-    style verifier fill:#fff3e0
-    style JIT fill:#e8f5e9
-    style REJECT fill:#ffebee
+    style verifier fill:#fff3e0,color:#1a1a2e
+    style JIT fill:#e8f5e9,color:#1a1a2e
+    style REJECT fill:#ffebee,color:#1a1a2e
 ```
 
 ### Stage 4: JIT Compilation
@@ -236,8 +236,8 @@ flowchart LR
         USER["User Space Memory*"]
     end
     
-    style allowed fill:#e8f5e9
-    style denied fill:#ffebee
+    style allowed fill:#e8f5e9,color:#1a1a2e
+    style denied fill:#ffebee,color:#1a1a2e
 ```
 
 > **Note:** `bpf_probe_read_user()` helper can safely read user memory in certain program types.

@@ -49,8 +49,8 @@ flowchart TB
     CTRL -->|"Programs & Rules"| data
     data -->|"Metrics & Events"| CTRL
     
-    style control fill:#e3f2fd
-    style data fill:#c8e6c9
+    style control fill:#e3f2fd,color:#1a1a2e
+    style data fill:#c8e6c9,color:#1a1a2e
 ```
 
 ![SDN Architecture Overview](teaching/images/network_concepts_overview_sdn.png)
@@ -181,9 +181,9 @@ flowchart TD
     LOCAL --> SOCKET["Socket Layer"] --> APP["Application"]
     FWD --> TC_OUT["tc egress"] --> NIC_OUT["NIC"]
     
-    style XDP fill:#e1f5fe
-    style NF fill:#fff3e0
-    style ROUTE fill:#f3e5f5
+    style XDP fill:#e1f5fe,color:#1a1a2e
+    style NF fill:#fff3e0,color:#1a1a2e
+    style ROUTE fill:#f3e5f5,color:#1a1a2e
 ```
 
 **Topics:**
@@ -306,9 +306,9 @@ flowchart TB
         MAPS_K <-.-> MAPS_US
     end
     
-    style userspace fill:#e3f2fd
-    style kernel fill:#fff3e0
-    style hooks fill:#c8e6c9
+    style userspace fill:#e3f2fd,color:#1a1a2e
+    style kernel fill:#fff3e0,color:#1a1a2e
+    style hooks fill:#c8e6c9,color:#1a1a2e
 ```
 
 **eBPF Hook Points for Networking:**
@@ -388,7 +388,7 @@ flowchart LR
     LB --> B2["Backend 2"]
     LB --> B3["Backend 3"]
     
-    style LB fill:#e8f5e9
+    style LB fill:#e8f5e9,color:#1a1a2e
 ```
 
 **Implementation approach:**
@@ -462,9 +462,9 @@ flowchart TB
         CNI --> NET["Node Network<br>(eBPF/iptables)"]
     end
     
-    style poda fill:#e3f2fd
-    style podb fill:#e3f2fd
-    style CNI fill:#c8e6c9
+    style poda fill:#e3f2fd,color:#1a1a2e
+    style podb fill:#e3f2fd,color:#1a1a2e
+    style CNI fill:#c8e6c9,color:#1a1a2e
 ```
 
 **CNI Plugin Development:**

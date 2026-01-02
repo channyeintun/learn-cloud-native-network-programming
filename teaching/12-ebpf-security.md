@@ -34,8 +34,8 @@ flowchart TB
         E1 --> E2 --> E3 --> E4
     end
     
-    style traditional fill:#ffebee
-    style ebpf fill:#e8f5e9
+    style traditional fill:#ffebee,color:#1a1a2e
+    style ebpf fill:#e8f5e9,color:#1a1a2e
 ```
 
 ### Security Use Cases
@@ -62,7 +62,7 @@ flowchart LR
     RINGBUF --> AGENT["User Space Agent"]
     AGENT --> DASHBOARD["Dashboard/SIEM"]
     
-    style EBPF fill:#e3f2fd
+    style EBPF fill:#e3f2fd,color:#1a1a2e
 ```
 
 **Goal:** See what's happening (passive)
@@ -76,8 +76,8 @@ flowchart LR
     DECISION -->|"Yes"| PROCEED["Continue"]
     DECISION -->|"No"| BLOCK["Block + Log"]
     
-    style LSM fill:#fff3e0
-    style BLOCK fill:#ffebee
+    style LSM fill:#fff3e0,color:#1a1a2e
+    style BLOCK fill:#ffebee,color:#1a1a2e
 ```
 
 **Goal:** Prevent bad things (active)
@@ -206,8 +206,8 @@ flowchart TB
     DECISION -->|"Yes"| PROCEED["Proceed"]
     DECISION -->|"No"| DENY["DENY\n-EPERM"]
     
-    style BPF fill:#e8f5e9
-    style DENY fill:#ffebee
+    style BPF fill:#e8f5e9,color:#1a1a2e
+    style DENY fill:#ffebee,color:#1a1a2e
 ```
 
 ### LSM Hook Categories
@@ -294,8 +294,8 @@ flowchart TB
     SECCOMP -->|"KILL"| KILL["Kill Process"]
     SECCOMP -->|"TRACE"| TRACE["Notify Tracer"]
     
-    style SECCOMP fill:#fff3e0
-    style KILL fill:#ffebee
+    style SECCOMP fill:#fff3e0,color:#1a1a2e
+    style KILL fill:#ffebee,color:#1a1a2e
 ```
 
 ### Generating Seccomp Profiles
@@ -488,8 +488,8 @@ flowchart TB
         SIEM --> ALERTS["Alerts"]
     end
     
-    style kernel fill:#fff3e0
-    style user fill:#e3f2fd
+    style kernel fill:#fff3e0,color:#1a1a2e
+    style user fill:#e3f2fd,color:#1a1a2e
 ```
 
 ### Multi-Program Security Monitor

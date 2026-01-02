@@ -204,7 +204,7 @@ flowchart LR
         SIP["Source IP<br>10.0.0.50"] --- SPORT["Source Port<br>49152"] --- DIP["Dest IP<br>8.8.8.8"] --- DPORT["Dest Port<br>443"] --- PROTO["Protocol<br>TCP"]
     end
     
-    style tuple fill:#e3f2fd
+    style tuple fill:#e3f2fd,color:#1a1a2e
 ```
 
 **Your load balancer will:**

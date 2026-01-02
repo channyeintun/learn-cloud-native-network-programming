@@ -30,8 +30,8 @@ flowchart TB
         NOTE2["Works on connections\nHas socket context\nPost-routing"]
     end
     
-    style packet fill:#e3f2fd
-    style socket fill:#fff3e0
+    style packet fill:#e3f2fd,color:#1a1a2e
+    style socket fill:#fff3e0,color:#1a1a2e
 ```
 
 | Aspect | Packet-Level (XDP/TC) | Socket-Level |
@@ -342,7 +342,7 @@ flowchart LR
         NOTE1["2 context switches\n2 copies\nHigh latency"]
     end
     
-    style traditional fill:#ffebee
+    style traditional fill:#ffebee,color:#1a1a2e
 ```
 
 ### The eBPF Solution
@@ -355,7 +355,7 @@ flowchart LR
         NOTE2["Zero copies\nNo user space\nMicroseconds"]
     end
     
-    style ebpf fill:#e8f5e9
+    style ebpf fill:#e8f5e9,color:#1a1a2e
 ```
 
 ### SOCKMAP Architecture
@@ -373,7 +373,7 @@ flowchart TB
         SKMSG --> |"Redirect"| PEER["Peer socket"]
     end
     
-    style SOCKMAP fill:#e8f5e9
+    style SOCKMAP fill:#e8f5e9,color:#1a1a2e
 ```
 
 ### Complete L4 Proxy Implementation
@@ -854,8 +854,8 @@ flowchart TB
     Q3 -->|"Yes"| CGROUP["cgroup BPF"]
     Q3 -->|"No"| SOCKOPS["sockops"]
     
-    style SOCKMAP fill:#e8f5e9
-    style CGROUP fill:#fff3e0
+    style SOCKMAP fill:#e8f5e9,color:#1a1a2e
+    style CGROUP fill:#fff3e0,color:#1a1a2e
 ```
 
 ---
