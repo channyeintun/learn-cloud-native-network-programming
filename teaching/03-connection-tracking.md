@@ -141,33 +141,39 @@ When a new packet arrives, the mark is gone.
 **CONNMARK** saves and restores marks to/from the connection entry.
 
 ```bash
-# Step 1: Mark NEW connections
+# Step 1: RESTORE the mark for packets of existing connections
+iptables -t mangle -A PREROUTING \
+    -m conntrack --ctstate ESTABLISHED,RELATED \
+    -j CONNMARK --restore-mark
+
+# Step 2: Mark only NEW connections
 iptables -t mangle -A PREROUTING \
     -m conntrack --ctstate NEW \
     -j MARK --set-mark 1
 
-# Step 2: SAVE the mark to the connection
+# Step 3: SAVE the new mark into the conntrack entry
 iptables -t mangle -A PREROUTING \
+    -m conntrack --ctstate NEW \
     -j CONNMARK --save-mark
-
-# Step 3: For ESTABLISHED packets, RESTORE the mark
-iptables -t mangle -A PREROUTING \
-    -m conntrack --ctstate ESTABLISHED,RELATED \
-    -j CONNMARK --restore-mark
 ```
+
+> **Order matters.** Rules run top to bottom, so the restore must come *before*
+> anything writes to the connmark. An unconditional `--save-mark` at the top
+> would copy the (empty) packet mark of every ESTABLISHED packet back over the
+> stored value, wiping the connection's mark on the very first reply.
 
 ### How It Works
 
 ```
 Packet 1 (SYN - NEW):
-  1. Match: ctstate NEW ✓
-  2. MARK packet with 1
-  3. CONNMARK --save-mark → saves "1" to conntrack entry
+  1. Rule 1 (--restore-mark): ctstate NEW ✗ → skipped
+  2. Rule 2: ctstate NEW ✓ → MARK packet with 1
+  3. Rule 3: CONNMARK --save-mark → saves "1" to conntrack entry
   4. ip rule fwmark 1 → routes via isp1 table
 
 Packet 2 (ACK - ESTABLISHED):
-  1. Match: ctstate ESTABLISHED ✓
-  2. CONNMARK --restore-mark → loads "1" from conntrack entry
+  1. Rule 1: ctstate ESTABLISHED ✓ → CONNMARK --restore-mark
+  2. Loads "1" from conntrack entry; rules 2 and 3 are NEW-only → skipped
   3. Packet now has mark 1
   4. ip rule fwmark 1 → routes via isp1 table (SAME PATH!)
 
@@ -205,12 +211,15 @@ func main() {
     }
 
     for _, session := range sessions {
+        if session.Mark == nil {
+            continue
+        }
         fmt.Printf("%s:%d -> %s:%d [mark=%d]\n",
             session.Origin.Src,
             *session.Origin.Proto.SrcPort,
             session.Origin.Dst,
             *session.Origin.Proto.DstPort,
-            session.Mark,
+            *session.Mark,
         )
     }
 }
@@ -219,7 +228,7 @@ func main() {
 ### Counting Connections Per ISP
 
 ```go
-func countConnectionsPerISP(ct *conntrack.Ct) map[uint32]int {
+func countConnectionsPerISP(ct *conntrack.Nfct) map[uint32]int {
     counts := make(map[uint32]int)
     
     sessions, _ := ct.Dump(conntrack.Conntrack, conntrack.IPv4)
@@ -243,7 +252,11 @@ func countConnectionsPerISP(ct *conntrack.Ct) map[uint32]int {
 ```bash
 # Max connections tracked
 cat /proc/sys/net/netfilter/nf_conntrack_max
-# Default: 65536 (may need increase for busy gateway)
+# Default is NOT fixed - the kernel derives it from RAM at boot:
+#   ~65536 on a 1-4 GB machine, 262144 on a machine with more than 4 GB
+#   (pre-5.15 kernels: 4 x nf_conntrack_buckets; 5.15+: 1 x nf_conntrack_buckets)
+# Check your actual value before tuning - on a >4 GB box the 262144 below is
+# already the default, and setting a lower number is a downgrade.
 
 # Current count
 cat /proc/sys/net/netfilter/nf_conntrack_count
@@ -317,7 +330,7 @@ conntrack -F
 1. **Conntrack** tracks all connections through your gateway
 2. **States**: NEW → ESTABLISHED → destroyed
 3. **CONNMARK** saves routing decisions to connection entries
-4. **--restore-mark** ensures all packets follow same path
+4. **--restore-mark** ensures all packets follow same path — and it must be the *first* mangle rule, before any `--save-mark`
 5. **Tuning**: Increase max for busy gateways
 6. **Go integration**: Use go-conntrack or netlink for programmatic access
 

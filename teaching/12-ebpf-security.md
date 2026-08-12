@@ -173,8 +173,11 @@ int BPF_PROG(fentry_filp_open, int dfd, struct filename *pathname) {
 
 // Fexit - at function exit (see return value!)
 SEC("fexit/do_filp_open")
-int BPF_PROG(fexit_filp_open, int dfd, struct filename *pathname, struct file *ret) {
-    if (!ret)
+int BPF_PROG(fexit_filp_open, int dfd, struct filename *pathname,
+             const struct open_flags *op, struct file *ret) {
+    // do_filp_open returns an ERR_PTR on failure, not NULL.
+    // IS_ERR_OR_NULL is not available in BPF programs, so test the range:
+    if (!ret || (unsigned long)ret >= (unsigned long)-4095)
         bpf_printk("Open failed\n");
     return 0;
 }
@@ -228,6 +231,7 @@ flowchart TB
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_tracing.h>
 #include <bpf/bpf_core_read.h>
+#include <linux/errno.h>   /* EPERM - vmlinux.h carries types, not macros */
 
 #define BLOCKED_PATH "/etc/shadow"
 
@@ -266,8 +270,12 @@ char LICENSE[] SEC("license") = "GPL";
 cat /sys/kernel/security/lsm
 # Should include "bpf"
 
-# If not, add to kernel cmdline:
-# lsm=lockdown,yama,apparmor,bpf
+# If not, append "bpf" to the LSMs the kernel is ALREADY running.
+# WARNING: lsm= REPLACES the whole list - every LSM you leave out is disabled
+# at the next boot (omitting selinux on Fedora/RHEL boots with SELinux off;
+# omitting capability disables POSIX capability enforcement).
+#   cat /sys/kernel/security/lsm     # e.g. lockdown,capability,yama,apparmor
+#   lsm=lockdown,capability,yama,apparmor,bpf   # <- your list + ",bpf"
 
 # Or recompile kernel with:
 # CONFIG_BPF_LSM=y
@@ -306,8 +314,15 @@ strace -f -c ./my_app
 
 # Using Inspektor Gadget in Kubernetes
 kubectl gadget trace exec --selector app=myapp
-kubectl gadget seccomp --selector app=myapp
+
+# Seccomp profiles are recorded per pod, not per selector:
+kubectl gadget advise seccomp-profile start -n <namespace> -p <podname>
+# ...exercise the workload...
+kubectl gadget advise seccomp-profile stop <trace-id>
 ```
+
+> **Note:** The builtin `advise` gadgets were removed from recent Inspektor Gadget
+> releases - pin a version that still ships them, or use the image-based gadget.
 
 ### Sample Seccomp Profile
 
@@ -360,10 +375,39 @@ struct {
     __uint(max_entries, 256 * 1024);
 } conn_events SEC(".maps");
 
+// tcp_v4_connect() is the function that *assigns* the tuple, so at entry
+// skc_rcv_saddr/skc_daddr/skc_dport are still zero. Stash the socket on
+// entry and read the tuple on the return probe.
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, 10240);
+    __type(key, __u32);            // thread id
+    __type(value, struct sock *);
+} connect_sockets SEC(".maps");
+
 SEC("kprobe/tcp_v4_connect")
 int trace_connect(struct pt_regs *ctx) {
     struct sock *sk = (struct sock *)PT_REGS_PARM1(ctx);
+    __u32 tid = (__u32)bpf_get_current_pid_tgid();
+    
+    bpf_map_update_elem(&connect_sockets, &tid, &sk, BPF_ANY);
+    return 0;
+}
+
+SEC("kretprobe/tcp_v4_connect")
+int trace_connect_ret(struct pt_regs *ctx) {
+    __u32 tid = (__u32)bpf_get_current_pid_tgid();
     struct conn_event *e;
+    
+    struct sock **skp = bpf_map_lookup_elem(&connect_sockets, &tid);
+    if (!skp)
+        return 0;
+    struct sock *sk = *skp;
+    bpf_map_delete_elem(&connect_sockets, &tid);
+    
+    // Non-zero return means connect() failed - nothing was assigned
+    if (PT_REGS_RC(ctx) != 0)
+        return 0;
     
     e = bpf_ringbuf_reserve(&conn_events, sizeof(*e), 0);
     if (!e)
@@ -373,10 +417,11 @@ int trace_connect(struct pt_regs *ctx) {
     e->uid = bpf_get_current_uid_gid() & 0xFFFFFFFF;
     e->type = CONN_CONNECT;
     
-    // Read socket info
+    // Read socket info - populated by now
     e->saddr = BPF_CORE_READ(sk, __sk_common.skc_rcv_saddr);
     e->daddr = BPF_CORE_READ(sk, __sk_common.skc_daddr);
-    e->dport = BPF_CORE_READ(sk, __sk_common.skc_dport);
+    e->dport = BPF_CORE_READ(sk, __sk_common.skc_dport);  // network byte order
+    e->sport = bpf_htons(BPF_CORE_READ(sk, __sk_common.skc_num));  // host order!
     
     bpf_get_current_comm(&e->comm, sizeof(e->comm));
     
@@ -384,6 +429,11 @@ int trace_connect(struct pt_regs *ctx) {
     return 0;
 }
 ```
+
+> **Byte order trap:** `skc_dport` is stored in network byte order, but
+> `skc_num` (the source port) is stored in **host** byte order - convert it with
+> `bpf_htons()` (needs `#include <bpf/bpf_endian.h>`) before putting it in a
+> `__be16` field.
 
 ### DNS Request Monitoring
 
@@ -501,6 +551,7 @@ flowchart TB
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_core_read.h>
 #include <bpf/bpf_tracing.h>
+#include <bpf/bpf_endian.h>
 
 #define EVENT_EXEC     1
 #define EVENT_FILE     2
@@ -554,7 +605,9 @@ static __always_inline void fill_common(struct event *e) {
     
     e->timestamp = bpf_ktime_get_ns();
     e->pid = bpf_get_current_pid_tgid() >> 32;
-    e->ppid = BPF_CORE_READ(task, parent, pid);
+    // real_parent survives ptrace attach (parent is retargeted to the tracer),
+    // and tgid is the PID as user space knows it (pid is the kernel's TID)
+    e->ppid = BPF_CORE_READ(task, real_parent, tgid);
     e->uid = bpf_get_current_uid_gid() & 0xFFFFFFFF;
     e->gid = bpf_get_current_uid_gid() >> 32;
     bpf_get_current_comm(&e->comm, sizeof(e->comm));
@@ -600,9 +653,37 @@ int trace_file(struct trace_event_raw_sys_enter *ctx) {
 }
 
 // Trace network connections
+//
+// The tuple is filled in *by* tcp_v4_connect(), so it is still zero at entry.
+// Stash the socket on the way in and read the tuple on the way out.
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, 10240);
+    __type(key, __u32);            // thread id
+    __type(value, struct sock *);
+} connect_sockets SEC(".maps");
+
 SEC("kprobe/tcp_v4_connect")
 int trace_connect(struct pt_regs *ctx) {
     struct sock *sk = (struct sock *)PT_REGS_PARM1(ctx);
+    __u32 tid = (__u32)bpf_get_current_pid_tgid();
+    
+    bpf_map_update_elem(&connect_sockets, &tid, &sk, BPF_ANY);
+    return 0;
+}
+
+SEC("kretprobe/tcp_v4_connect")
+int trace_connect_ret(struct pt_regs *ctx) {
+    __u32 tid = (__u32)bpf_get_current_pid_tgid();
+    
+    struct sock **skp = bpf_map_lookup_elem(&connect_sockets, &tid);
+    if (!skp)
+        return 0;
+    struct sock *sk = *skp;
+    bpf_map_delete_elem(&connect_sockets, &tid);
+    
+    if (PT_REGS_RC(ctx) != 0)   // connect failed - tuple never assigned
+        return 0;
     
     struct event *e = bpf_ringbuf_reserve(&events, sizeof(*e), 0);
     if (!e)
@@ -613,7 +694,8 @@ int trace_connect(struct pt_regs *ctx) {
     
     e->data.conn.saddr = BPF_CORE_READ(sk, __sk_common.skc_rcv_saddr);
     e->data.conn.daddr = BPF_CORE_READ(sk, __sk_common.skc_daddr);
-    e->data.conn.sport = BPF_CORE_READ(sk, __sk_common.skc_num);
+    // skc_num is host byte order, skc_dport is already network byte order
+    e->data.conn.sport = bpf_htons(BPF_CORE_READ(sk, __sk_common.skc_num));
     e->data.conn.dport = BPF_CORE_READ(sk, __sk_common.skc_dport);
     
     bpf_ringbuf_submit(e, 0);
@@ -643,7 +725,7 @@ import (
     "github.com/cilium/ebpf/ringbuf"
 )
 
-//go:generate go run github.com/cilium/ebpf/cmd/bpf2go secmon ./bpf/security_monitor.bpf.c -- -I./bpf
+//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -type event secmon ./bpf/security_monitor.bpf.c -- -I./bpf
 
 const (
     EventExec    = 1
@@ -667,6 +749,10 @@ func main() {
 
     kpConnect, _ := link.Kprobe("tcp_v4_connect", objs.TraceConnect, nil)
     defer kpConnect.Close()
+
+    // The tuple is only readable on the way out, so the return probe matters
+    krConnect, _ := link.Kretprobe("tcp_v4_connect", objs.TraceConnectRet, nil)
+    defer krConnect.Close()
 
     // Read events
     rd, _ := ringbuf.NewReader(objs.Events)
@@ -695,6 +781,9 @@ func main() {
     }
 }
 
+// Layout of struct event: timestamp 0..8, pid 8..12, ppid 12..16, uid 16..20,
+// gid 20..24, type 24, comm 25..41 - then the union. The union contains __be32
+// members, so it is 4-byte aligned and starts at offset 44, not 41.
 func handleEvent(data []byte) {
     // Parse and log based on event type
     eventType := data[24]  // offset to type field
@@ -703,15 +792,16 @@ func handleEvent(data []byte) {
     case EventExec:
         fmt.Printf("[EXEC] PID=%d %s\n", 
             binary.LittleEndian.Uint32(data[8:12]),
-            nullStr(data[25:41]))
+            nullStr(data[44:300]))
     case EventFile:
         fmt.Printf("[FILE] PID=%d opened %s\n",
             binary.LittleEndian.Uint32(data[8:12]),
-            nullStr(data[41:]))
+            nullStr(data[44:300]))
     case EventConnect:
-        fmt.Printf("[CONN] PID=%d -> %s\n",
+        fmt.Printf("[CONN] PID=%d %s -> %s\n",
             binary.LittleEndian.Uint32(data[8:12]),
-            formatIP(data[45:49]))
+            formatIP(data[44:48]),
+            formatIP(data[48:52]))
     }
 }
 
@@ -726,6 +816,12 @@ func formatIP(b []byte) string {
     return net.IPv4(b[0], b[1], b[2], b[3]).String()
 }
 ```
+
+> **Do not hand-compute offsets in real code.** Padding and union alignment
+> change the moment you touch the struct. Generate the Go type instead -
+> `bpf2go -type event ...` emits `secmonEvent`, and `binary.Read(bytes.NewReader(
+> record.RawSample), binary.LittleEndian, &ev)` fills it with the layout the
+> compiler actually produced.
 
 ---
 
@@ -750,8 +846,13 @@ spec:
       type: "cred"
     selectors:
     - matchActions:
-      - action: Sigkill  # Kill the process!
+      - action: Post   # log the event; do NOT Sigkill unconditionally
 ```
+
+> ⚠️ `commit_creds()` runs on every `execve()` (from `begin_new_exec()`), not
+> just on privilege escalation, so an unfiltered `Sigkill` here kills every
+> process that execs on the node. Always constrain a `Sigkill` with
+> `matchArgs`/`matchBinaries`/`matchPIDs`, and test with `action: Post` first.
 
 ### Falco
 
@@ -762,7 +863,8 @@ Cloud-native runtime security:
 - rule: Shell spawned in container
   desc: Detect shell spawned in container
   condition: >
-    container and proc.name in (shell_binaries)
+    spawned_process and container
+    and proc.name in (shell_binaries)
     and not proc.pname in (known_shell_spawn_binaries)
   output: >
     Shell spawned in container 
@@ -782,8 +884,9 @@ kubectl gadget trace exec
 # Monitor network connections
 kubectl gadget trace tcp
 
-# Generate network policy
-kubectl gadget advise network-policy -n myapp
+# Generate network policy: record traffic, then generate the policy
+kubectl gadget advise network-policy monitor -n myapp --output ./networktrace.log
+kubectl gadget advise network-policy report --input ./networktrace.log > network-policy.yaml
 ```
 
 ---
@@ -813,7 +916,9 @@ kubectl gadget advise network-policy -n myapp
 
 ## Next Steps
 
-You've completed the eBPF learning modules! Next:
+Two modules remain: socket-layer eBPF and the Go toolchain.
+
+Once you have worked through module 14:
 
 1. **Build a project** from Phase 6 of the roadmap
 2. **Contribute** to Cilium, Falco, or Tetragon
@@ -828,3 +933,8 @@ You've completed the eBPF learning modules! Next:
 - [Falco Rules](https://falco.org/docs/rules/)
 - [Security Observability with eBPF](https://isovalent.com/security/)
 - [Inspektor Gadget](https://github.com/inspektor-gadget/inspektor-gadget)
+
+---
+
+## Next Module
+→ [13-socket-programming.md](./13-socket-programming.md): Socket filters, sockops, sk_msg, SOCKMAP, cgroup BPF

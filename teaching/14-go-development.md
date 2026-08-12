@@ -74,8 +74,12 @@ clang --target=bpf --print-supported-cpus
 # On a Linux machine with BTF support
 bpftool btf dump file /sys/kernel/btf/vmlinux format c > bpf/vmlinux.h
 
-# Or download pre-generated
-curl -LO https://github.com/libbpf/libbpf-bootstrap/raw/master/vmlinux/vmlinux.h
+# Or download pre-generated (pick your architecture: x86, arm64, riscv, s390x, ...)
+# NOTE: include/<arch>/vmlinux.h is a symlink - raw.githubusercontent.com would
+# serve the link target string, not the header - so fetch the versioned file.
+# Browse https://github.com/libbpf/vmlinux.h/tree/main/include/x86 for the newest.
+curl -L -o bpf/vmlinux.h \
+  https://raw.githubusercontent.com/libbpf/vmlinux.h/main/include/x86/vmlinux_6.19.h
 ```
 
 ### 4. Recommended Project Structure
@@ -93,12 +97,12 @@ my-ebpf-tool/
 │   └── program.bpf.c          # Your eBPF C code
 │
 ├── program_bpfel.go           # Generated (little endian)
-├── program_bpfeb.go           # Generated (big endian)
+├── program_bpfeb.go           # Generated (big endian, only if you ask for the bpfeb target)
 └── program_bpfel.o            # Compiled eBPF object
 ```
 
 **Files you write:** `main.go`, `bpf/program.bpf.c`  
-**Files that are generated:** `program_bpfel.go`, `program_bpfeb.go`, `*.o`
+**Files that are generated:** `program_bpfel.go`, `*.o` (plus `program_bpfeb.go` / `program_bpfeb.o` when a `bpfeb` target is requested)
 
 ---
 
@@ -175,8 +179,9 @@ go generate ./...
 
 This creates:
 - `program_bpfel.go` - Go types and loader for little-endian
-- `program_bpfeb.go` - Go types and loader for big-endian
 - `program_bpfel.o` - Compiled eBPF bytecode
+
+> **Note:** bpf2go emits one pair of files per requested target. Omit `-target bpfel` (bpf2go defaults to `bpfel,bpfeb`) or pass `-target bpfel,bpfeb` if you also want the big-endian `program_bpfeb.go` / `program_bpfeb.o` shown in the project layout above.
 
 #### 4. Use Generated Code
 
@@ -337,11 +342,21 @@ if err := iter.Err(); err != nil {
 ### Batch Operations
 
 ```go
-// Batch lookup (efficient for many keys)
-keys := []uint32{1, 2, 3, 4, 5}
-values := make([]uint64, len(keys))
+// Batch lookup walks the whole map, filling the output slices
+var cursor ebpf.MapBatchCursor
+keys := make([]uint32, 100)
+values := make([]uint64, 100)
 
-count, err := objs.MyMap.BatchLookup(keys, values, nil)
+count, err := objs.MyMap.BatchLookup(&cursor, keys, values, nil)
+if err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) { // ErrKeyNotExist = end of map
+    log.Fatal(err)
+}
+
+// count is how many slots were actually filled - the ErrKeyNotExist case
+// still returns a valid partial count, so always read it instead of len(keys).
+for i := 0; i < count; i++ {
+    fmt.Printf("Key: %d, Value: %d\n", keys[i], values[i])
+}
 ```
 
 ### Per-CPU Maps
@@ -408,7 +423,8 @@ defer l.Close()
 ### Cgroup
 
 ```go
-cgroupPath := "/sys/fs/cgroup/unified"
+cgroupPath := "/sys/fs/cgroup"  // cgroup v2 root; use a sub-path to scope to one cgroup
+                                // (hybrid-mode systems use /sys/fs/cgroup/unified)
 
 l, err := link.AttachCgroup(link.CgroupOptions{
     Path:    cgroupPath,
@@ -484,8 +500,8 @@ for {
 // Get detailed verifier output on error
 err := loadProgramObjects(&objs, &ebpf.CollectionOptions{
     Programs: ebpf.ProgramOptions{
-        LogLevel: ebpf.LogLevelInstruction,
-        LogSize:  1024 * 1024,  // 1MB log buffer
+        LogLevel:     ebpf.LogLevelInstruction,
+        LogSizeStart: 1024 * 1024, // 1MB starting log buffer (grown as needed)
     },
 })
 
@@ -638,9 +654,11 @@ func main() {
 import "github.com/prometheus/client_golang/prometheus"
 
 var (
-    packetsProcessed = prometheus.NewCounter(prometheus.CounterOpts{
-        Name: "ebpf_packets_processed_total",
-        Help: "Total packets processed by eBPF",
+    // The BPF map already holds a running total, so mirror it with Set() on a
+    // gauge. Counter.Add() would add the whole total again on every update.
+    packetsProcessed = prometheus.NewGauge(prometheus.GaugeOpts{
+        Name: "ebpf_packets_processed",   // drop the _total suffix on a gauge
+        Help: "Packets processed by eBPF (running total from the BPF map)",
     })
 )
 
@@ -651,7 +669,7 @@ func init() {
 func updateMetrics(objs *programObjects) {
     var count uint64
     if err := objs.PacketCount.Lookup(uint32(0), &count); err == nil {
-        packetsProcessed.Add(float64(count))
+        packetsProcessed.Set(float64(count))
     }
 }
 ```
@@ -783,10 +801,24 @@ sudo setcap cap_bpf,cap_net_admin,cap_perfmon=eip ./my-tool
 You now have everything needed to build production eBPF applications in Go!
 
 Recommended practice:
-1. Build the packet sniffer from Module 13
+1. Build the packet sniffer from [Module 13](./13-socket-programming.md)
 2. Add Prometheus metrics
 3. Write unit tests with BPF_PROG_RUN
 4. Deploy with proper capabilities
+
+---
+
+## Next Module
+
+→ **[15-network-namespaces-and-virtual-devices.md](./15-network-namespaces-and-virtual-devices.md)**: network namespaces, veth pairs, bridges and VXLAN — the throwaway lab you attach these programs to, and the substrate a pod is made of. If you skipped it earlier, read it now; everything from Module 16 on assumes it.
+
+The rest of the course applies what you have to Kubernetes and production:
+
+- **[Module 16: Kubernetes Networking](./16-kubernetes-networking.md)** — the pod network model, ClusterIP and kube-proxy, read rule by rule
+- **[Module 17: CNI Plugin Development](./17-cni-plugin-development.md)** — the plugin that turns an empty namespace into a pod
+- **[Module 18: Network Policy Enforcement](./18-network-policy-enforcement.md)** — identity-based policy in BPF maps
+- **[Module 19: Control Plane Agent Patterns](./19-control-plane-agent-patterns.md)** — the direct sequel to this module: turn `load, attach, select {}` into an agent that reconciles maps against cluster state for months
+- **[Module 20: Production Load Balancer Datapath](./20-production-load-balancer-datapath.md)** — Maglev, DSR, health checking, AF_XDP
 
 ---
 

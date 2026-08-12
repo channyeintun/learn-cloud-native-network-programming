@@ -130,15 +130,20 @@ Switching ISPs mid-connection breaks the TCP state!
 ```mermaid
 stateDiagram-v2
     [*] --> CLOSED
-    CLOSED --> SYN_SENT: SYN sent
-    SYN_SENT --> ESTABLISHED: SYN+ACK received
-    ESTABLISHED --> CLOSING: FIN sent/received
-    CLOSING --> CLOSED: Connection terminated
-    
-    note right of ESTABLISHED
-        Normal data transfer
-        happens here
-    end note
+    CLOSED --> SYN_SENT: connect()
+    CLOSED --> LISTEN: listen()
+    LISTEN --> SYN_RECEIVED: SYN received
+    SYN_SENT --> ESTABLISHED: SYN-ACK received
+    SYN_RECEIVED --> ESTABLISHED: ACK received
+
+    ESTABLISHED --> FIN_WAIT_1: close() (active close)
+    FIN_WAIT_1 --> FIN_WAIT_2: ACK received
+    FIN_WAIT_2 --> TIME_WAIT: FIN received
+    TIME_WAIT --> CLOSED: 2*MSL timeout
+
+    ESTABLISHED --> CLOSE_WAIT: FIN received (passive close)
+    CLOSE_WAIT --> LAST_ACK: close()
+    LAST_ACK --> CLOSED: ACK received
 ```
 
 **Connection tracking states:**
@@ -147,7 +152,7 @@ stateDiagram-v2
 - `RELATED`: Related to existing connection (ICMP error, FTP data)
 - `INVALID`: Doesn't match any pattern
 
-#### TCP Header Structure
+#### TCP Header Structure (20 bytes minimum)
 
 ```
  0                   1                   2                   3
@@ -158,16 +163,19 @@ stateDiagram-v2
 |                        Sequence Number                        |
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 |                    Acknowledgment Number                      |
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|  Data |       |U|A|P|R|S|F|                                   |
-| Offset|       |R|C|S|S|Y|I|            Window Size            |
-|       |       |G|K|H|T|N|N|                                   |
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
++-------+-----------+-+-+-+-+-+-+-------------------------------+
+|  Data |  Reserved |U|A|P|R|S|F|            Window             |
+| Offset|           |R|C|S|S|Y|I|                               |
+|       |           |G|K|H|T|N|N|                               |
++-------+-----------+-+-+-+-+-+-+-------------------------------+
+|           Checksum            |        Urgent Pointer         |
++-------------------------------+-------------------------------+
 ```
 
 **Key fields:**
 - **Source/Dest Port**: Identifies applications (0-65535)
 - **Sequence Number**: Order of data bytes
+- **Data Offset**: header length in 32-bit words (5 = 20 bytes, no options)
 - **Flags**: SYN, ACK, FIN, RST, PSH, URG
 
 ### UDP: User Datagram Protocol

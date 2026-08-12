@@ -14,16 +14,17 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"os"
 	"sort"
+	"strconv"
 	"sync"
 	"time"
 )
 
 // ScanResult holds the result of scanning a port
 type ScanResult struct {
-	Port   int
-	Open   bool
-	Banner string
+	Port int
+	Open bool
 }
 
 func main() {
@@ -34,6 +35,14 @@ func main() {
 	timeout := flag.Duration("timeout", 500*time.Millisecond, "Connection timeout")
 	workers := flag.Int("workers", 100, "Number of concurrent workers")
 	flag.Parse()
+
+	// Validate the range before scanning: an inverted range makes the summary
+	// count negative, and ports outside 1-65535 can never be dialled.
+	if *startPort < 1 || *endPort > 65535 || *endPort < *startPort {
+		log.Printf("invalid port range %d-%d: start must be >= 1, end must be <= 65535, and end must not be less than start",
+			*startPort, *endPort)
+		os.Exit(2)
+	}
 
 	log.Printf("🔍 Scanning %s ports %d-%d", *host, *startPort, *endPort)
 	log.Printf("   Timeout: %v, Workers: %d", *timeout, *workers)
@@ -116,7 +125,9 @@ func scanPorts(host string, startPort, endPort int, timeout time.Duration, worke
 }
 
 func scanPort(host string, port int, timeout time.Duration) ScanResult {
-	address := fmt.Sprintf("%s:%d", host, port)
+	// JoinHostPort brackets IPv6 literals ("::1" -> "[::1]:80");
+	// a plain Sprintf("%s:%d") produces an unusable address.
+	address := net.JoinHostPort(host, strconv.Itoa(port))
 
 	conn, err := net.DialTimeout("tcp", address, timeout)
 	if err != nil {

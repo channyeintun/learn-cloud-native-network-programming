@@ -16,6 +16,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -26,13 +27,40 @@ import (
 	"time"
 )
 
+// Duration is a time.Duration that is friendly to JSON config files.
+// encoding/json has no notion of durations: it decodes a bare number into a
+// time.Duration as *nanoseconds* (so 5 means 5ns, not 5s) and rejects "5s"
+// outright. This wrapper accepts both a Go duration string ("5s", "1m30s")
+// and a bare number, which it reads as seconds.
+type Duration time.Duration
+
+func (d *Duration) UnmarshalJSON(b []byte) error {
+	var v any
+	if err := json.Unmarshal(b, &v); err != nil {
+		return err
+	}
+	switch x := v.(type) {
+	case float64: // bare number = seconds
+		*d = Duration(time.Duration(x) * time.Second)
+	case string:
+		p, err := time.ParseDuration(x)
+		if err != nil {
+			return err
+		}
+		*d = Duration(p)
+	default:
+		return fmt.Errorf("invalid duration %v", v)
+	}
+	return nil
+}
+
 // Endpoint represents a health check target
 type Endpoint struct {
-	Name           string        `json:"name"`
-	URL            string        `json:"url"`
-	Interval       time.Duration `json:"interval"`
-	Timeout        time.Duration `json:"timeout"`
-	ExpectedStatus int           `json:"expected_status"`
+	Name           string   `json:"name"`
+	URL            string   `json:"url"`
+	Interval       Duration `json:"interval"`
+	Timeout        Duration `json:"timeout"`
+	ExpectedStatus int      `json:"expected_status"`
 }
 
 // HealthStatus represents the current health of an endpoint
@@ -49,36 +77,36 @@ var defaultEndpoints = []Endpoint{
 	{
 		Name:           "Google",
 		URL:            "https://www.google.com",
-		Interval:       5 * time.Second,
-		Timeout:        3 * time.Second,
+		Interval:       Duration(5 * time.Second),
+		Timeout:        Duration(3 * time.Second),
 		ExpectedStatus: 200,
 	},
 	{
 		Name:           "Cloudflare",
 		URL:            "https://www.cloudflare.com",
-		Interval:       5 * time.Second,
-		Timeout:        3 * time.Second,
+		Interval:       Duration(5 * time.Second),
+		Timeout:        Duration(3 * time.Second),
 		ExpectedStatus: 200,
 	},
 	{
 		Name:           "GitHub",
 		URL:            "https://api.github.com",
-		Interval:       5 * time.Second,
-		Timeout:        3 * time.Second,
+		Interval:       Duration(5 * time.Second),
+		Timeout:        Duration(3 * time.Second),
 		ExpectedStatus: 200,
 	},
 	{
 		Name:           "Example (should work)",
 		URL:            "https://example.com",
-		Interval:       5 * time.Second,
-		Timeout:        3 * time.Second,
+		Interval:       Duration(5 * time.Second),
+		Timeout:        Duration(3 * time.Second),
 		ExpectedStatus: 200,
 	},
 	{
 		Name:           "Bad Endpoint (should fail)",
 		URL:            "https://this-does-not-exist-12345.com",
-		Interval:       10 * time.Second,
-		Timeout:        2 * time.Second,
+		Interval:       Duration(10 * time.Second),
+		Timeout:        Duration(2 * time.Second),
 		ExpectedStatus: 200,
 	},
 }
@@ -154,7 +182,12 @@ func main() {
 }
 
 func (hc *HealthChecker) monitorEndpoint(ctx context.Context, ep *Endpoint) {
-	ticker := time.NewTicker(ep.Interval)
+	interval := time.Duration(ep.Interval)
+	if interval <= 0 {
+		// NewTicker panics on a non-positive duration
+		interval = 5 * time.Second
+	}
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
 	// Initial check
@@ -171,7 +204,7 @@ func (hc *HealthChecker) monitorEndpoint(ctx context.Context, ep *Endpoint) {
 }
 
 func (hc *HealthChecker) checkEndpoint(ctx context.Context, ep *Endpoint) {
-	reqCtx, cancel := context.WithTimeout(ctx, ep.Timeout)
+	reqCtx, cancel := context.WithTimeout(ctx, time.Duration(ep.Timeout))
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(reqCtx, "GET", ep.URL, nil)
@@ -188,7 +221,13 @@ func (hc *HealthChecker) checkEndpoint(ctx context.Context, ep *Endpoint) {
 		hc.updateStatus(ep, false, latency, err.Error())
 		return
 	}
-	defer resp.Body.Close()
+	// Drain before closing: an unread body makes the Transport drop the
+	// connection instead of returning it to the idle pool, so every check
+	// would pay for a fresh TCP + TLS handshake.
+	defer func() {
+		io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
+		resp.Body.Close()
+	}()
 
 	healthy := resp.StatusCode == ep.ExpectedStatus
 	errMsg := ""
@@ -314,10 +353,10 @@ func loadEndpoints(filename string) ([]Endpoint, error) {
 	// Set defaults
 	for i := range endpoints {
 		if endpoints[i].Interval == 0 {
-			endpoints[i].Interval = 5 * time.Second
+			endpoints[i].Interval = Duration(5 * time.Second)
 		}
 		if endpoints[i].Timeout == 0 {
-			endpoints[i].Timeout = 3 * time.Second
+			endpoints[i].Timeout = Duration(3 * time.Second)
 		}
 		if endpoints[i].ExpectedStatus == 0 {
 			endpoints[i].ExpectedStatus = 200

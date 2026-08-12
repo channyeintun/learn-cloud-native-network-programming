@@ -248,6 +248,9 @@ import (
 runtime.LockOSThread()
 defer runtime.UnlockOSThread()
 
+origNs, _ := netns.Get()        // save the current namespace first
+defer origNs.Close()
+
 ns, _ := netns.GetFromName("myns")
 defer ns.Close()
 
@@ -306,16 +309,23 @@ if (value) {
 ```c
 // Ethernet
 struct ethhdr *eth = data;
+if ((void *)(eth + 1) > data_end)
+    return XDP_PASS;
 if (eth->h_proto != bpf_htons(ETH_P_IP))
     return XDP_PASS;
 
 // IP
 struct iphdr *ip = (void *)(eth + 1);
+if ((void *)(ip + 1) > data_end)
+    return XDP_PASS;
 __u8 protocol = ip->protocol;
 __u32 src_ip = ip->saddr;
 
 // TCP (variable IP header length!)
-struct tcphdr *tcp = (void *)ip + (ip->ihl * 4);
+__u8 ip_hdr_len = ip->ihl * 4;
+if (ip_hdr_len < sizeof(*ip))
+    return XDP_PASS;
+struct tcphdr *tcp = (void *)ip + ip_hdr_len;
 if ((void *)(tcp + 1) > data_end)
     return XDP_PASS;
 __u16 dst_port = bpf_ntohs(tcp->dest);
@@ -345,8 +355,13 @@ cat /boot/config-$(uname -r) | grep BPF
 
 ### Verifier Errors
 ```bash
-# Get detailed verifier output
-sudo cat /sys/kernel/debug/tracing/trace_pipe
+# The verifier log is returned to the loader in its log buffer, not to trace_pipe.
+# bpftool: -d turns on the full verifier log
+sudo bpftool -d prog load prog.o /sys/fs/bpf/prog
+
+# cilium/ebpf: print the returned *ebpf.VerifierError
+#   var ve *ebpf.VerifierError
+#   if errors.As(err, &ve) { fmt.Printf("%+v\n", ve) }
 ```
 
 ### eBPF Logs
@@ -378,3 +393,10 @@ ethtool -S eth0 | grep xdp
 | Trace pipe | `/sys/kernel/debug/tracing/trace_pipe` |
 | Network stats | `/proc/net/*` |
 | Interface info | `/sys/class/net/*` |
+
+---
+
+## Next Module
+→ [08-ebpf-vm-deep-dive.md](./08-ebpf-vm-deep-dive.md): eBPF VM registers, instruction set, JIT, verifier
+
+← Back to the [module index](../README.md)

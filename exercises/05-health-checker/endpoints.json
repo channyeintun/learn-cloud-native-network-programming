@@ -1,0 +1,30 @@
+[
+  {
+    "name": "Google",
+    "url": "https://www.google.com",
+    "interval": "5s",
+    "timeout": "3s",
+    "expected_status": 200
+  },
+  {
+    "name": "Cloudflare",
+    "url": "https://www.cloudflare.com",
+    "interval": "5s",
+    "timeout": "3s",
+    "expected_status": 200
+  },
+  {
+    "name": "Example (bare numbers = seconds)",
+    "url": "https://example.com",
+    "interval": 10,
+    "timeout": 2,
+    "expected_status": 200
+  },
+  {
+    "name": "Bad Endpoint (should fail)",
+    "url": "https://this-does-not-exist-12345.com",
+    "interval": "10s",
+    "timeout": "2s",
+    "expected_status": 200
+  }
+]

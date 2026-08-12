@@ -14,13 +14,17 @@ package main
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
+	"time"
 )
 
 const addr = ":8080"
@@ -56,7 +60,11 @@ func main() {
 		listener.Close()
 	}()
 
-	// Accept connections loop
+	// Accept connections loop. retryDelay implements the exponential backoff
+	// net/http.Server.Serve uses: without it a persistent transient failure
+	// (fd exhaustion) would spin a CPU core and flood the log.
+	var retryDelay time.Duration
+
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
@@ -67,10 +75,28 @@ func main() {
 				log.Println("✅ Server shutdown complete")
 				return
 			default:
-				log.Printf("Accept error: %v", err)
+			}
+
+			if isTemporaryAcceptError(err) {
+				if retryDelay == 0 {
+					retryDelay = 5 * time.Millisecond
+				} else {
+					retryDelay *= 2
+				}
+				if retryDelay > time.Second {
+					retryDelay = time.Second
+				}
+				log.Printf("Accept error: %v; retrying in %v", err, retryDelay)
+				time.Sleep(retryDelay)
 				continue
 			}
+
+			// Not recoverable: stop accepting and drain in-flight connections.
+			log.Printf("Fatal accept error: %v", err)
+			wg.Wait()
+			return
 		}
+		retryDelay = 0
 
 		wg.Add(1)
 		go func(c net.Conn) {
@@ -80,8 +106,35 @@ func main() {
 	}
 }
 
+// isTemporaryAcceptError reports whether an Accept failure is worth retrying.
+// Running out of file descriptors (EMFILE/ENFILE) or losing a half-open
+// connection before it is accepted (ECONNABORTED) clears up on its own; a
+// timeout does too. Anything else means the listener is unusable.
+func isTemporaryAcceptError(err error) bool {
+	if errors.Is(err, syscall.EMFILE) || errors.Is(err, syscall.ENFILE) ||
+		errors.Is(err, syscall.ECONNABORTED) || errors.Is(err, syscall.EINTR) {
+		return true
+	}
+	var netErr net.Error
+	return errors.As(err, &netErr) && netErr.Timeout()
+}
+
 func handleConnection(ctx context.Context, conn net.Conn) {
 	defer conn.Close()
+
+	// Say goodbye and unblock the blocking Read below when the server is
+	// shutting down. The farewell must be written here, before Close: the
+	// read loop is parked in ReadString and cannot send it itself.
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		select {
+		case <-ctx.Done():
+			fmt.Fprintf(conn, "Server shutting down. Goodbye!\n")
+			conn.Close()
+		case <-done:
+		}
+	}()
 
 	clientAddr := conn.RemoteAddr().String()
 	log.Printf("📥 Client connected: %s", clientAddr)
@@ -94,23 +147,31 @@ func handleConnection(ctx context.Context, conn net.Conn) {
 	reader := bufio.NewReader(conn)
 
 	for {
-		// Check if context is cancelled
-		select {
-		case <-ctx.Done():
-			fmt.Fprintf(conn, "Server shutting down. Goodbye!\n")
-			return
-		default:
-		}
-
-		// Read line from client
+		// Read line from client. On shutdown the watcher goroutine above
+		// closes the socket, which makes this call return an error.
 		message, err := reader.ReadString('\n')
 		if err != nil {
-			log.Printf("📤 Client disconnected: %s", clientAddr)
+			// ReadString returns whatever it read *together with* the error,
+			// so a final line sent without a trailing newline still has to be
+			// echoed before we give up on the connection.
+			if last := strings.TrimRight(message, "\r\n"); last != "" {
+				log.Printf("💬 [%s] %s", clientAddr, last)
+				if _, werr := conn.Write([]byte(fmt.Sprintf("Echo: %s\n", last))); werr != nil {
+					log.Printf("write to %s: %v", clientAddr, werr)
+				}
+			}
+			if errors.Is(err, io.EOF) || errors.Is(err, net.ErrClosed) {
+				log.Printf("📤 Client disconnected: %s", clientAddr)
+			} else {
+				log.Printf("📤 Client %s read error: %v", clientAddr, err)
+			}
 			return
 		}
 
-		// Trim and check for quit command
-		message = message[:len(message)-1] // Remove newline
+		// Trim the line ending and check for the quit command. TrimRight also
+		// strips the '\r' that telnet, PuTTY and other CRLF clients send, so
+		// "quit" matches for them too.
+		message = strings.TrimRight(message, "\r\n")
 		if message == "quit" {
 			fmt.Fprintf(conn, "Goodbye!\n")
 			log.Printf("📤 Client quit: %s", clientAddr)
@@ -119,7 +180,10 @@ func handleConnection(ctx context.Context, conn net.Conn) {
 
 		// Echo back with prefix
 		response := fmt.Sprintf("Echo: %s\n", message)
-		conn.Write([]byte(response))
+		if _, err := conn.Write([]byte(response)); err != nil {
+			log.Printf("write to %s: %v", clientAddr, err)
+			return
+		}
 
 		log.Printf("💬 [%s] %s", clientAddr, message)
 	}

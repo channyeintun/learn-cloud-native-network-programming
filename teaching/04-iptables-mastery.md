@@ -65,7 +65,7 @@ flowchart TD
 ### Viewing Rules
 
 ```bash
-# List all rules in all tables
+# List all rules in the filter table (the default table when -t is omitted)
 iptables -L -v -n
 
 # Specific table
@@ -158,7 +158,7 @@ iptables -t mangle -A PREROUTING \
 # ============================================
 # STEP 3: Save marks to connection tracking
 # ============================================
-iptables -t mangle -A PREROUTING -j CONNMARK --save-mark
+iptables -t mangle -A PREROUTING -m conntrack --ctstate NEW -j CONNMARK --save-mark
 
 # ============================================
 # STEP 4: NAT (Masquerading)
@@ -350,19 +350,27 @@ iptables -t raw -F
 ### Exercise 1: Build and Test Basic Marking
 
 ```bash
-# 1. Add test marking rule
-sudo iptables -t mangle -A PREROUTING \
-    -p icmp \
-    -j MARK --set-mark 99
+# 1. Add test marking rules (OUTPUT catches locally generated pings,
+#    PREROUTING catches forwarded/incoming ones), and persist the mark
+#    into the conntrack entry so it is visible in conntrack -L
+sudo iptables -t mangle -A OUTPUT -p icmp -j MARK --set-mark 99
+sudo iptables -t mangle -A OUTPUT -p icmp -j CONNMARK --save-mark
+sudo iptables -t mangle -A PREROUTING -p icmp -j MARK --set-mark 99
+sudo iptables -t mangle -A PREROUTING -p icmp -j CONNMARK --save-mark
 
 # 2. Test
 ping -c 1 8.8.8.8
 
-# 3. Check conntrack
-conntrack -L -p icmp
+# 3. Check the packet counters, then the saved connmark
+#    (MARK sets skb->mark only; CONNMARK --save-mark is what conntrack -L shows)
+sudo iptables -t mangle -L OUTPUT -v -n
+conntrack -L -p icmp    # now shows mark=99
 
 # 4. Clean up
+sudo iptables -t mangle -D OUTPUT -p icmp -j MARK --set-mark 99
+sudo iptables -t mangle -D OUTPUT -p icmp -j CONNMARK --save-mark
 sudo iptables -t mangle -D PREROUTING -p icmp -j MARK --set-mark 99
+sudo iptables -t mangle -D PREROUTING -p icmp -j CONNMARK --save-mark
 ```
 
 ### Exercise 2: Monitor Distribution

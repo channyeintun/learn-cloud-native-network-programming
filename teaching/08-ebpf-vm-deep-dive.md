@@ -76,7 +76,7 @@ int my_program(struct xdp_md *ctx) {  // ctx arrives in R1
 
 ## eBPF Instruction Set
 
-The eBPF instruction set is **RISC-like** (Reduced Instruction Set Computer) with fixed-size 64-bit instructions.
+The eBPF instruction set is **RISC-like** (Reduced Instruction Set Computer) with mostly fixed-size 64-bit instructions. The one exception is the 128-bit "wide" instruction form (`BPF_LD | BPF_IMM | BPF_DW`, i.e. `lddw`, used to load 64-bit immediates and map addresses), which occupies two 8-byte slots.
 
 ### Instruction Categories
 
@@ -97,7 +97,7 @@ flowchart TB
 
 ### Instruction Format
 
-Each eBPF instruction is **64 bits** (8 bytes):
+Each eBPF instruction is **64 bits** (8 bytes), except the wide `lddw` form which takes two slots (16 bytes):
 
 ```
 ┌──────┬──────┬──────┬──────┬─────────────────────┐
@@ -266,7 +266,7 @@ struct xdp_md {
     __u32 data_meta;   // Metadata before packet
     __u32 ingress_ifindex;  // Incoming interface
     __u32 rx_queue_index;   // RX queue
-    __u32 egress_ifindex;   // For XDP_TX (kernel 5.8+)
+    __u32 egress_ifindex;   // Egress device; readable only in XDP programs attached to a devmap entry (BPF_XDP_DEVMAP), i.e. after XDP_REDIRECT (kernel 5.8+)
 };
 
 // Usage pattern
@@ -281,6 +281,7 @@ int example(struct xdp_md *ctx) {
         return XDP_PASS;
     
     // Now safe to access eth->h_proto, etc.
+    return XDP_PASS;
 }
 ```
 
@@ -451,9 +452,9 @@ if (value)
 
 ## Next Steps
 
-- **Module 09:** Master eBPF Maps for data sharing
-- **Module 10:** Learn CO-RE for portable programs
-- **Module 11:** Deep dive into networking hooks
+- **[Module 09: eBPF Maps Mastery](./09-ebpf-maps-mastery.md)** — master eBPF maps for data sharing
+- **[Module 10: CO-RE & BTF Portability](./10-core-btf-portability.md)** — learn CO-RE for portable programs
+- **[Module 11: eBPF Networking Guide](./11-ebpf-networking-guide.md)** — deep dive into networking hooks
 
 ---
 

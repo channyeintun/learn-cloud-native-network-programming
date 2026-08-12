@@ -86,8 +86,16 @@ int http_filter(struct __sk_buff *skb) {
     void *data = (void *)(long)skb->data;
     void *data_end = (void *)(long)skb->data_end;
     
-    // For socket filters, we start at IP header (no ethernet)
-    struct iphdr *ip = data;
+    // AF_PACKET/SOCK_RAW sockets see the Ethernet header first
+    // (SOCK_DGRAM would start at the IP header)
+    struct ethhdr *eth = data;
+    if ((void *)(eth + 1) > data_end)
+        return 0;  // Drop - can't parse
+    
+    if (eth->h_proto != bpf_htons(ETH_P_IP))
+        return 0;  // Drop - not IPv4
+    
+    struct iphdr *ip = (void *)(eth + 1);
     if ((void *)(ip + 1) > data_end)
         return 0;  // Drop - can't parse
     
@@ -115,10 +123,9 @@ package main
 
 import (
     "log"
-    "net"
     "syscall"
 
-    "github.com/cilium/ebpf"
+    "golang.org/x/sys/unix"
 )
 
 //go:generate go run github.com/cilium/ebpf/cmd/bpf2go filter ./bpf/socket_filter.bpf.c
@@ -140,9 +147,10 @@ func main() {
     defer syscall.Close(fd)
 
     // Attach BPF filter to socket
-    if err := syscall.SetsockoptInt(fd, syscall.SOL_SOCKET, 
-                                     syscall.SO_ATTACH_BPF, 
-                                     objs.HttpFilter.FD()); err != nil {
+    // (SO_ATTACH_BPF only exists in golang.org/x/sys/unix - the frozen
+    //  syscall package stops at SO_ATTACH_FILTER)
+    if err := unix.SetsockoptInt(fd, unix.SOL_SOCKET, unix.SO_ATTACH_BPF,
+                                 objs.HttpFilter.FD()); err != nil {
         log.Fatal(err)
     }
 
@@ -168,21 +176,36 @@ func htons(i uint16) uint16 {
 
 ```c
 // Capture all packets and send to user space
+#define MAX_PACKET 1500
+
+// The reserve size must be a compile-time constant, so the payload
+// buffer is a fixed-size array - not a trailing variable-length one.
+struct packet_meta {
+    __u64 timestamp;
+    __u32 len;
+    __u8  data[MAX_PACKET];
+};
+
 SEC("socket")
 int packet_capture(struct __sk_buff *skb) {
-    struct packet_meta *meta;
-    
-    // Reserve space in ring buffer
-    meta = bpf_ringbuf_reserve(&packets, sizeof(*meta) + skb->len, 0);
+    // Reserve space in ring buffer (constant size)
+    struct packet_meta *meta = bpf_ringbuf_reserve(&packets, sizeof(*meta), 0);
     if (!meta)
         return skb->len;  // Keep but don't capture
+    
+    __u32 len = skb->len;
+    if (len > MAX_PACKET)
+        len = MAX_PACKET;
+    if (len == 0) {                 /* ARG_CONST_SIZE must be provably > 0 */
+        bpf_ringbuf_discard(meta, 0);
+        return skb->len;
+    }
     
     meta->len = skb->len;
     meta->timestamp = bpf_ktime_get_ns();
     
-    // Copy packet data
-    bpf_skb_load_bytes(skb, 0, meta->data, 
-                       skb->len > MAX_PACKET ? MAX_PACKET : skb->len);
+    // Copy packet data (bounded runtime length)
+    bpf_skb_load_bytes(skb, 0, meta->data, len);
     
     bpf_ringbuf_submit(meta, 0);
     
@@ -254,7 +277,7 @@ int connection_tracker(struct bpf_sock_ops *skops) {
     key.saddr = skops->local_ip4;
     key.daddr = skops->remote_ip4;
     key.sport = bpf_htons(skops->local_port);
-    key.dport = skops->remote_port;
+    key.dport = skops->remote_port >> 16;  /* already network byte order */
     
     switch (skops->op) {
         case BPF_SOCK_OPS_ACTIVE_ESTABLISHED_CB:
@@ -308,7 +331,8 @@ sudo bpftool cgroup show /sys/fs/cgroup/sockops_test
 
 ```go
 // Attach to cgroup
-cgroupPath := "/sys/fs/cgroup/unified"  // or specific cgroup
+cgroupPath := "/sys/fs/cgroup"  // cgroup v2 root; use a sub-path to scope to one cgroup
+                                // (hybrid-mode systems mount v2 at /sys/fs/cgroup/unified)
 cgroup, err := os.Open(cgroupPath)
 if err != nil {
     log.Fatal(err)
@@ -411,7 +435,7 @@ int sockmap_sockops(struct bpf_sock_ops *skops) {
             key.saddr = skops->local_ip4;
             key.daddr = skops->remote_ip4;
             key.sport = bpf_htons(skops->local_port);
-            key.dport = skops->remote_port;
+            key.dport = skops->remote_port >> 16;  /* already network byte order */
             
             bpf_sock_hash_update(skops, &sock_hash, &key, BPF_ANY);
             break;
@@ -428,8 +452,8 @@ int sockmap_redir(struct sk_msg_md *msg) {
     // Build key for peer socket (swap src/dst)
     key.saddr = msg->remote_ip4;
     key.daddr = msg->local_ip4;
-    key.sport = bpf_htons(msg->remote_port);
-    key.dport = bpf_htons(msg->local_port);
+    key.sport = msg->remote_port >> 16;      /* already network byte order */
+    key.dport = bpf_htons(msg->local_port);  /* local_port is host byte order */
     
     // Redirect to peer socket
     return bpf_msg_redirect_hash(msg, &sock_hash, &key, BPF_F_INGRESS);
@@ -663,6 +687,7 @@ Create a tcpdump-like tool using socket filters.
 #include <bpf/bpf_endian.h>
 
 #define MAX_PACKET_SIZE 1500
+#define ETH_HLEN        14   // AF_PACKET/SOCK_RAW starts at the Ethernet header
 
 struct packet_event {
     __u64 timestamp;
@@ -684,24 +709,27 @@ int packet_sniffer(struct __sk_buff *skb) {
     
     if (len > MAX_PACKET_SIZE)
         len = MAX_PACKET_SIZE;
+    if (len == 0)                   /* ARG_CONST_SIZE must be provably > 0 */
+        return skb->len;
     
-    event = bpf_ringbuf_reserve(&packets, 
-                                 sizeof(*event) - MAX_PACKET_SIZE + len, 
-                                 0);
+    // The reserve size must be a compile-time constant, so reserve the
+    // full fixed-size record and clamp only the copy length below
+    event = bpf_ringbuf_reserve(&packets, sizeof(*event), 0);
     if (!event)
         return skb->len;
     
     event->timestamp = bpf_ktime_get_ns();
-    event->len = skb->len;
+    event->len = skb->len;  // record the real length
     event->ifindex = skb->ifindex;
     
-    // Read IP protocol
+    // Read IP protocol - the skb starts at the MAC header on this hook,
+    // so the IP header is ETH_HLEN bytes in (0 if the load fails)
     __u8 ip_proto = 0;
-    bpf_skb_load_bytes(skb, offsetof(struct iphdr, protocol), 
+    bpf_skb_load_bytes(skb, ETH_HLEN + offsetof(struct iphdr, protocol), 
                        &ip_proto, sizeof(ip_proto));
     event->protocol = ip_proto;
     
-    // Copy packet data
+    // Copy packet data, starting at the Ethernet header
     bpf_skb_load_bytes(skb, 0, event->data, len);
     
     bpf_ringbuf_submit(event, 0);
@@ -730,6 +758,7 @@ import (
     "github.com/cilium/ebpf/ringbuf"
     "github.com/google/gopacket"
     "github.com/google/gopacket/layers"
+    "golang.org/x/sys/unix"
 )
 
 //go:generate go run github.com/cilium/ebpf/cmd/bpf2go sniffer ./bpf/sniffer.bpf.c
@@ -757,10 +786,11 @@ func main() {
     }
     syscall.Bind(fd, &addr)
 
-    // Attach socket filter
-    syscall.SetsockoptInt(fd, syscall.SOL_SOCKET, 
-                          syscall.SO_ATTACH_BPF, 
-                          objs.PacketSniffer.FD())
+    // Attach socket filter (SO_ATTACH_BPF lives in x/sys/unix, not syscall)
+    if err := unix.SetsockoptInt(fd, unix.SOL_SOCKET, unix.SO_ATTACH_BPF,
+                                 objs.PacketSniffer.FD()); err != nil {
+        log.Fatal(err)
+    }
 
     // Read from ring buffer
     rd, _ := ringbuf.NewReader(objs.Packets)
@@ -794,8 +824,9 @@ func printPacket(data []byte) {
     protocol := data[16]
     pktData := data[17:]
 
-    // Parse with gopacket
-    packet := gopacket.NewPacket(pktData, layers.LayerTypeIPv4, 
+    // Parse with gopacket - the capture starts at the Ethernet header,
+    // so decode from there and pull the IPv4 layer out of the stack
+    packet := gopacket.NewPacket(pktData, layers.LayerTypeEthernet, 
                                   gopacket.Default)
     
     if ipLayer := packet.Layer(layers.LayerTypeIPv4); ipLayer != nil {
@@ -868,9 +899,14 @@ flowchart TB
 
 ---
 
+## Next Module
+→ [14-go-development.md](./14-go-development.md): cilium/ebpf, bpf2go, debugging, testing, IDE setup
+
+---
+
 ## Further Reading
 
 - [Learning eBPF - Chapter 7](https://learning.oreilly.com/library/view/learning-ebpf/) - Program Types
-- [Cloudflare's sk_lookup blog](https://blog.cloudflare.com/how-we-built-cloudflare-spectrum/)
-- [Cilium SOCKMAP](https://cilium.io/blog/2018/04/24/cilium-1-0-1-deep-performance-analysis/)
+- [Cloudflare's sk_lookup blog: "It's crowded in here!"](https://blog.cloudflare.com/its-crowded-in-here/)
+- [Cilium SOCKMAP: Accelerating Envoy and Istio with Cilium and the Linux kernel](https://cilium.io/blog/2018/08/07/istio-10-cilium/)
 - [BPF cgroup documentation](https://docs.kernel.org/bpf/prog_cgroup_sockopt.html)

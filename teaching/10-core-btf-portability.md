@@ -102,7 +102,7 @@ cat /boot/config-$(uname -r) | grep CONFIG_DEBUG_INFO_BTF
 | Basic BTF | 4.18 |
 | BTF for vmlinux | 5.2 |
 | CO-RE relocations | 5.2 |
-| Full CO-RE support | 5.4+ recommended |
+| Full CO-RE support | 5.10+ recommended |
 
 ---
 
@@ -448,20 +448,19 @@ func nullTerminatedString(b []byte) string {
 ### Essential CO-RE Flags
 
 ```bash
+# -O2 is required (the BPF backend cannot codegen at -O0); -g emits BTF
 clang -target bpf \
-      -D__TARGET_ARCH_x86 \     # Target architecture
-      -O2 \                      # Optimization (required!)
-      -g \                       # Debug info (for BTF)
+      -D__TARGET_ARCH_x86 \
+      -O2 \
+      -g \
       -c program.bpf.c \
       -o program.bpf.o
+```
 
-# In Go generate directive:
-//go:generate go run github.com/cilium/ebpf/cmd/bpf2go \
-    -target bpfel \
-    -cc clang \
-    program ./bpf/program.bpf.c -- \
-    -I./bpf \
-    -D__TARGET_ARCH_x86
+In a Go generate directive (the whole command must stay on one line):
+
+```go
+//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -target bpfel -cc clang program ./bpf/program.bpf.c -- -I./bpf -D__TARGET_ARCH_x86
 ```
 
 ### Architecture Macros
@@ -539,20 +538,27 @@ cleanup:
 
 ### Optional Fields
 
+`bpf_core_field_exists()` is a load-time relocation, not a preprocessor
+conditional — **both** branches still have to compile. `real_start_time` was
+renamed in 5.5 and is absent from a modern `vmlinux.h`, so the old name has to
+come from your own "flavor" struct:
+
 ```c
+struct task_struct___old {
+    __u64 real_start_time;
+} __attribute__((preserve_access_index));
+
 SEC("kprobe/do_execve")
 int trace(struct pt_regs *ctx) {
     struct task_struct *task = (void *)bpf_get_current_task();
-    
-    __u64 start_time;
+    __u64 start_time = 0;
     
     // Field name changed between kernels
     if (bpf_core_field_exists(task->start_boottime)) {
-        // Kernel 5.5+
-        start_time = BPF_CORE_READ(task, start_boottime);
+        start_time = BPF_CORE_READ(task, start_boottime);   // 5.5+
     } else {
-        // Older kernels
-        start_time = BPF_CORE_READ(task, real_start_time);
+        struct task_struct___old *old = (void *)task;        // pre-5.5
+        start_time = BPF_CORE_READ(old, real_start_time);
     }
     
     return 0;
@@ -619,14 +625,28 @@ pid_t pid;
 bpf_probe_read(&pid, sizeof(pid), (void *)task + pid_offset);
 ```
 
-### Pattern 3: Enum Value Relocation
+### Pattern 3: Enum Values and When Relocation Applies
+
+`bpf_core_enum_value()` resolves an enumerator against the *running* kernel's BTF, so a value that was renumbered since you compiled still comes out right. It needs a **named** enum to look up:
 
 ```c
-// Enum values can change between kernels
+// Named enum -> relocatable. Ask whether this kernel has the helper at all,
+// then read the number it assigns to it.
+if (bpf_core_enum_value_exists(enum bpf_func_id, BPF_FUNC_snprintf)) {
+    __u32 helper_id = bpf_core_enum_value(enum bpf_func_id, BPF_FUNC_snprintf);
+    bpf_printk("bpf_snprintf is helper %u on this kernel", helper_id);
+}
+```
+
+The counter-example - and the case you hit first in networking code:
+
+```c
+// TCP states come from an *anonymous* enum in vmlinux.h, so there is no
+// `enum tcp_state` to name and nothing to relocate against - use the
+// enumerator directly. (These values are UAPI; they never move.)
 int sock_state = BPF_CORE_READ(sk, __sk_common.skc_state);
 
-// Use bpf_core_enum_value for portable comparison
-if (sock_state == bpf_core_enum_value(enum tcp_state, TCP_ESTABLISHED)) {
+if (sock_state == TCP_ESTABLISHED) {
     // Handle established connections
 }
 ```
@@ -674,14 +694,14 @@ sudo bpftool -d prog load program.bpf.o /sys/fs/bpf/program
 | **BPF_CORE_READ** | Safe struct access, relocates at load time |
 | **Field existence** | Use `bpf_core_field_exists()` for optional fields |
 | **Compilation** | Always use `-g` for debug info |
-| **Kernel 5.4+** | Recommended for full CO-RE support |
+| **Kernel 5.10+** | Recommended for full CO-RE support |
 
 ---
 
 ## Next Steps
 
-- **Module 11:** Complete networking stack guide
-- **Module 12:** Security and observability with eBPF
+- **[Module 11: eBPF Networking Guide](./11-ebpf-networking-guide.md)** — complete networking stack guide
+- **[Module 12: eBPF Security](./12-ebpf-security.md)** — security and observability with eBPF
 
 ---
 

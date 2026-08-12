@@ -28,13 +28,13 @@ const (
 
 // PingResult holds statistics for a ping session
 type PingResult struct {
-	Host         string
-	PacketsSent  int
-	PacketsRecv  int
-	MinRTT       time.Duration
-	MaxRTT       time.Duration
-	AvgRTT       time.Duration
-	TotalRTT     time.Duration
+	Host        string
+	PacketsSent int
+	PacketsRecv int
+	MinRTT      time.Duration
+	MaxRTT      time.Duration
+	AvgRTT      time.Duration
+	TotalRTT    time.Duration
 }
 
 func main() {
@@ -98,7 +98,11 @@ func main() {
 	fmt.Println("─────────────────────────────────")
 	fmt.Printf("\n--- %s ping statistics ---\n", *host)
 
-	lossPercent := float64(result.PacketsSent-result.PacketsRecv) / float64(result.PacketsSent) * 100
+	// Guard the division: with -count 0 nothing was sent and 0/0 would print NaN.
+	lossPercent := 0.0
+	if result.PacketsSent > 0 {
+		lossPercent = float64(result.PacketsSent-result.PacketsRecv) / float64(result.PacketsSent) * 100
+	}
 	fmt.Printf("%d packets transmitted, %d received, %.1f%% packet loss\n",
 		result.PacketsSent, result.PacketsRecv, lossPercent)
 
@@ -146,24 +150,41 @@ func ping(dst *net.IPAddr, seq int, timeout time.Duration) (time.Duration, error
 		return 0, fmt.Errorf("write error: %w", err)
 	}
 
-	// Receive reply
+	// Receive reply.
+	// A raw ICMP socket receives *every* ICMP message the host gets, not just
+	// ours - a system `ping` running in another terminal delivers its replies
+	// here too. So keep reading until a packet matches all four criteria:
+	// echo reply, our ID, our sequence number, and the host we pinged.
+	// The deadline set above turns a genuinely lost reply into a read error.
 	reply := make([]byte, 1500)
-	n, _, err := conn.ReadFrom(reply)
-	if err != nil {
-		return 0, fmt.Errorf("read error: %w", err)
+	for {
+		n, peer, err := conn.ReadFrom(reply)
+		if err != nil {
+			return 0, fmt.Errorf("read error: %w", err)
+		}
+
+		rm, err := icmp.ParseMessage(protocolICMP, reply[:n])
+		if err != nil {
+			continue // not a well-formed ICMP message
+		}
+
+		if rm.Type != ipv4.ICMPTypeEchoReply {
+			continue // e.g. Destination Unreachable or Time Exceeded
+		}
+
+		echo, ok := rm.Body.(*icmp.Echo)
+		if !ok {
+			continue
+		}
+
+		if echo.ID != os.Getpid()&0xffff || echo.Seq != seq {
+			continue // another process's ping, or a stale sequence of ours
+		}
+
+		if peer.String() != dst.IP.String() {
+			continue // right identifier, wrong host
+		}
+
+		return time.Since(start), nil
 	}
-
-	rtt := time.Since(start)
-
-	// Parse reply
-	rm, err := icmp.ParseMessage(protocolICMP, reply[:n])
-	if err != nil {
-		return 0, fmt.Errorf("parse error: %w", err)
-	}
-
-	if rm.Type != ipv4.ICMPTypeEchoReply {
-		return 0, fmt.Errorf("unexpected ICMP type: %v", rm.Type)
-	}
-
-	return rtt, nil
 }

@@ -127,7 +127,7 @@ flowchart TB
 | **XDP** | NIC driver | Ingress only | DDoS, Load balancing, Firewall |
 | **TC ingress** | After XDP | Ingress | Traffic shaping, Policing |
 | **TC egress** | Before NIC | Egress | Rate limiting, Shaping |
-| **Socket** | L4 | Both | Per-connection filtering |
+| **Socket filter** | L4 | Ingress only (socket RX path) | Per-connection filtering |
 | **cgroup/sock** | cgroup | Both | Container networking |
 | **sk_msg** | Socket | Both | Proxy, TLS interception |
 
@@ -137,7 +137,7 @@ flowchart TB
 
 ### 1. XDP (eXpress Data Path)
 
-The fastest hook point - runs before the kernel allocates any memory for the packet.
+The fastest hook point - runs in the NIC driver, before the kernel allocates an `sk_buff` for the packet.
 
 ```c
 SEC("xdp")
@@ -151,7 +151,7 @@ int xdp_drop_icmp(struct xdp_md *ctx) {
         return XDP_PASS;
     
     // Only process IPv4
-    if (eth->h_proto != htons(ETH_P_IP))
+    if (eth->h_proto != bpf_htons(ETH_P_IP))
         return XDP_PASS;
     
     // Parse IP header
@@ -463,17 +463,7 @@ The verifier ensures your program is safe:
 
 ### Common Verifier Errors
 
-```c
-// ERROR: Unbounded loop
-for (int i = 0; i < n; i++) { }  // n is unknown
-
-// FIX: Use bounded loop
-#pragma unroll
-for (int i = 0; i < 10; i++) { }
-
-// Or use bpf_loop() helper (kernel 5.17+)
-bpf_loop(100, callback_fn, &ctx, 0);
-```
+The one you will hit first, and most often:
 
 ```c
 // ERROR: Invalid memory access
@@ -487,6 +477,8 @@ if ((void *)(ip + 1) > data_end)
 __u32 src = ip->saddr;  // Now safe
 ```
 
+The verifier's full error catalogue and fixes are in [Module 08: eBPF VM Deep Dive](./08-ebpf-vm-deep-dive.md#common-verifier-errors-and-fixes).
+
 ---
 
 ## Helper Functions
@@ -498,13 +490,13 @@ eBPF programs can't call arbitrary kernel functions. Instead, use **BPF helpers*
 ```c
 // Map operations
 bpf_map_lookup_elem(map, key)      // Get value
-bpf_map_update_elem(map, key, val) // Set value
+bpf_map_update_elem(map, key, val, flags) // Set value (flags: BPF_ANY / BPF_NOEXIST / BPF_EXIST)
 bpf_map_delete_elem(map, key)      // Delete entry
 
 // Packet manipulation (TC only)
 bpf_skb_store_bytes(skb, offset, from, len, flags)
 bpf_skb_load_bytes(skb, offset, to, len)
-bpf_skb_change_head(skb, len, flags)  // Add/remove header space
+bpf_skb_change_head(skb, len, flags)  // Grow headroom by len bytes (cannot shrink; use bpf_skb_adjust_room to add or remove space)
 
 // XDP helpers
 bpf_xdp_adjust_head(ctx, delta)    // Move data pointer
@@ -607,9 +599,15 @@ int firewall(struct xdp_md *ctx) {
         return XDP_DROP;
     }
     
+    // Variable IP header length - reject ihl < 5, or the L4 offset lands
+    // inside the IP header itself
+    __u8 ip_hdr_len = ip->ihl * 4;
+    if (ip_hdr_len < sizeof(*ip))
+        return XDP_PASS;
+    
     // Check blocked ports (TCP/UDP)
     if (ip->protocol == IPPROTO_TCP) {
-        struct tcphdr *tcp = (void *)ip + (ip->ihl * 4);
+        struct tcphdr *tcp = (void *)ip + ip_hdr_len;
         if ((void *)(tcp + 1) > data_end)
             return XDP_PASS;
         
@@ -620,7 +618,7 @@ int firewall(struct xdp_md *ctx) {
             return XDP_DROP;
         }
     } else if (ip->protocol == IPPROTO_UDP) {
-        struct udphdr *udp = (void *)ip + (ip->ihl * 4);
+        struct udphdr *udp = (void *)ip + ip_hdr_len;
         if ((void *)(udp + 1) > data_end)
             return XDP_PASS;
         
@@ -766,40 +764,26 @@ func printStats(m *ebpf.Map) {
 
 ### bpftool
 
+The two commands you need for the firewall exercise above - confirming your program loaded, and reading the map it fills:
+
 ```bash
-# List loaded programs
-sudo bpftool prog list
-
-# Show program details
-sudo bpftool prog show id 123
-
-# Dump program bytecode
-sudo bpftool prog dump xlated id 123
-
-# List maps
-sudo bpftool map list
-
-# Dump map contents
-sudo bpftool map dump id 45
-
-# Show program attached to interface
+# Is my program attached to the interface?
 sudo bpftool net list
+
+# What is in my map right now? (by name, so you don't have to look up an ID)
+sudo bpftool map dump name blocked_ips
 ```
 
 ### bpftrace
 
-High-level tracing language:
+High-level tracing language - useful for a quick look at kernel behaviour without writing and loading a program:
 
 ```bash
-# Count syscalls by program
-sudo bpftrace -e 'tracepoint:syscalls:sys_enter_* { @[comm] = count(); }'
-
 # Trace TCP connections
 sudo bpftrace -e 'kprobe:tcp_connect { printf("connect: %s\n", comm); }'
-
-# Network latency histogram
-sudo bpftrace -e 'kprobe:tcp_rcv_established { @ns = hist(nsecs); }'
 ```
+
+Full command reference: [Module 7 – Quick Reference](./07-quick-reference.md#bpftool).
 
 ---
 
@@ -820,7 +804,14 @@ sudo bpftrace -e 'kprobe:tcp_rcv_established { @ns = hist(nsecs); }'
 2. Add more features: rate limiting, logging
 3. Build an L4 load balancer with XDP
 4. Study Cilium's eBPF programs
-5. Move on to Module 7: XDP Deep Dive
+5. Keep [Module 7: Quick Reference](./07-quick-reference.md) open while you practice
+
+---
+
+## Next Module
+→ [08-ebpf-vm-deep-dive.md](./08-ebpf-vm-deep-dive.md): eBPF virtual machine, instruction set, JIT and verifier internals
+
+XDP is covered in depth in [11-ebpf-networking-guide.md](./11-ebpf-networking-guide.md).
 
 ---
 

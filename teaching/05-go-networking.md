@@ -6,11 +6,11 @@
 
 | Exercise | What You'll Build | Command |
 |----------|-------------------|---------|
-| [01-tcp-echo](../exercises/01-tcp-echo) | Concurrent TCP server | `go run ./exercises/01-tcp-echo` |
-| [02-udp-server](../exercises/02-udp-server) | UDP echo with stats | `go run ./exercises/02-udp-server` |
-| [03-port-scanner](../exercises/03-port-scanner) | Concurrent scanner | `go run ./exercises/03-port-scanner -host localhost` |
-| [04-icmp-ping](../exercises/04-icmp-ping) | ICMP ping tool | `sudo go run ./exercises/04-icmp-ping -host 8.8.8.8` |
-| [05-health-checker](../exercises/05-health-checker) | HTTP health monitor | `go run ./exercises/05-health-checker` |
+| [01-tcp-echo](../exercises/01-tcp-echo) | Concurrent TCP server | `cd exercises && go run ./01-tcp-echo` |
+| [02-udp-server](../exercises/02-udp-server) | UDP echo with stats | `cd exercises && go run ./02-udp-server` |
+| [03-port-scanner](../exercises/03-port-scanner) | Concurrent scanner | `cd exercises && go run ./03-port-scanner -host localhost` |
+| [04-icmp-ping](../exercises/04-icmp-ping) | ICMP ping tool | `cd exercises && sudo go run ./04-icmp-ping -host 8.8.8.8` |
+| [05-health-checker](../exercises/05-health-checker) | HTTP health monitor | `cd exercises && go run ./05-health-checker` |
 
 📂 **Location:** `exercises/` directory in project root
 
@@ -119,13 +119,24 @@ func main() {
     
     for {
         fmt.Print("Enter message: ")
-        message, _ := reader.ReadString('\n')
+        message, err := reader.ReadString('\n')
+        if err != nil {
+            // EOF on stdin (Ctrl-D) - nothing left to send
+            return
+        }
         
         // Send to server
-        conn.Write([]byte(message))
+        if _, err := conn.Write([]byte(message)); err != nil {
+            fmt.Printf("Write failed: %v\n", err)
+            return
+        }
         
         // Read response
-        response, _ := serverReader.ReadString('\n')
+        response, err := serverReader.ReadString('\n')
+        if err != nil {
+            fmt.Printf("Server closed connection: %v\n", err)
+            return
+        }
         fmt.Printf("Server: %s", response)
     }
 }
@@ -249,6 +260,8 @@ import (
     "golang.org/x/net/ipv4"
 )
 
+const protocolICMP = 1  // IANA protocol number for ICMP
+
 func ping(host string, timeout time.Duration) (time.Duration, error) {
     // Resolve address
     dst, err := net.ResolveIPAddr("ip4", host)
@@ -289,15 +302,36 @@ func ping(host string, timeout time.Duration) (time.Duration, error) {
         return 0, err
     }
     
-    // Receive reply
+    // Receive reply.
+    // A raw ICMP socket sees EVERY ICMP message on the host, including
+    // Destination Unreachable and replies belonging to other processes.
+    // Keep reading until we find OUR echo reply; the deadline set above
+    // turns a genuinely lost reply into a read error.
     reply := make([]byte, 1500)
-    _, _, err = conn.ReadFrom(reply)
-    if err != nil {
-        return 0, err
+    for {
+        n, peer, err := conn.ReadFrom(reply)
+        if err != nil {
+            return 0, err
+        }
+        
+        rm, err := icmp.ParseMessage(protocolICMP, reply[:n])
+        if err != nil {
+            continue
+        }
+        if rm.Type != ipv4.ICMPTypeEchoReply {
+            continue  // e.g. Destination Unreachable
+        }
+        
+        echo, ok := rm.Body.(*icmp.Echo)
+        if !ok || echo.ID != os.Getpid()&0xffff || echo.Seq != 1 {
+            continue  // another process's ping
+        }
+        if peer.String() != dst.IP.String() {
+            continue  // reply from a different host
+        }
+        
+        return time.Since(start), nil
     }
-    
-    rtt := time.Since(start)
-    return rtt, nil
 }
 
 func main() {
@@ -483,12 +517,13 @@ package main
 import (
     "fmt"
     "net"
+    "strconv"
     "sync"
     "time"
 )
 
 func scanPort(host string, port int, timeout time.Duration) bool {
-    address := fmt.Sprintf("%s:%d", host, port)
+    address := net.JoinHostPort(host, strconv.Itoa(port))
     conn, err := net.DialTimeout("tcp", address, timeout)
     if err != nil {
         return false

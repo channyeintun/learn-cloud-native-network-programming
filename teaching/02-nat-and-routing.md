@@ -168,8 +168,8 @@ This is how your load balancer will work:
 ```
 1. Packet arrives from LAN
 2. iptables examines packet in PREROUTING
-3. If NEW connection: mark with 1 or 2 (routing decision)
-4. If ESTABLISHED: restore previous mark
+3. If ESTABLISHED/RELATED: restore the mark saved on the connection (first!)
+4. If NEW connection: mark with 1 or 2 (routing decision), then save that mark
 5. ip rule matches mark → selects routing table
 6. Packet goes out correct ISP
 7. POSTROUTING applies MASQUERADE
@@ -185,8 +185,19 @@ This is how your load balancer will work:
 # Temporary:
 echo 1 > /proc/sys/net/ipv4/ip_forward
 
+# Multi-WAN requires loose (not strict) reverse-path filtering. With
+# rp_filter=1 the kernel validates a packet's source against the MAIN table
+# only, so replies arriving on the non-default ISP are silently dropped.
+# Check first:  sysctl net.ipv4.conf.all.rp_filter net.ipv4.conf.eth1.rp_filter
+sysctl -w net.ipv4.conf.all.rp_filter=2
+sysctl -w net.ipv4.conf.default.rp_filter=2
+sysctl -w net.ipv4.conf.eth0.rp_filter=2
+sysctl -w net.ipv4.conf.eth1.rp_filter=2
+
 # Permanent (add to /etc/sysctl.conf):
 net.ipv4.ip_forward = 1
+net.ipv4.conf.all.rp_filter = 2
+net.ipv4.conf.default.rp_filter = 2
 ```
 
 ### Step 2: Define Routing Tables
@@ -231,21 +242,25 @@ iptables -t nat -A POSTROUTING -o eth1 -j MASQUERADE
 ### Step 6: Mark Packets (Basic Example)
 
 ```bash
-# Mark new connections randomly 70/30
-iptables -t mangle -A PREROUTING -m conntrack --ctstate NEW \
+# eth2 = LAN-facing interface (eth0/eth1 are the two ISP uplinks)
+
+# 1. Restore the mark for packets of already-tracked connections.
+#    This MUST come first, before anything writes to the connmark.
+iptables -t mangle -A PREROUTING -m conntrack --ctstate ESTABLISHED,RELATED \
+    -j CONNMARK --restore-mark
+
+# 2. Mark new connections randomly 70/30 (LAN-facing interface only)
+iptables -t mangle -A PREROUTING -i eth2 -m conntrack --ctstate NEW \
     -m statistic --mode random --probability 0.70 \
     -j MARK --set-mark 1
 
-iptables -t mangle -A PREROUTING -m conntrack --ctstate NEW \
+iptables -t mangle -A PREROUTING -i eth2 -m conntrack --ctstate NEW \
     -m mark --mark 0 \
     -j MARK --set-mark 2
 
-# Save mark to connection for persistence
-iptables -t mangle -A PREROUTING -j CONNMARK --save-mark
-
-# Restore mark for established connections
-iptables -t mangle -A PREROUTING -m conntrack --ctstate ESTABLISHED,RELATED \
-    -j CONNMARK --restore-mark
+# 3. Save the mark into the conntrack entry so later packets can restore it
+iptables -t mangle -A PREROUTING -m conntrack --ctstate NEW \
+    -j CONNMARK --save-mark
 ```
 
 ---

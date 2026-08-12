@@ -99,9 +99,9 @@ flowchart TB
 | Hook | Layer | Direction | Context | Performance | Use Case |
 |------|-------|-----------|---------|-------------|----------|
 | **XDP** | L2/Driver | Ingress only | `xdp_md` | ⚡ Fastest | DDoS, LB |
-| **TC ingress** | L3 | Ingress | `__sk_buff` | 🚀 Fast | Complex filtering |
-| **TC egress** | L3 | Egress | `__sk_buff` | 🚀 Fast | Rate limiting |
-| **Socket filter** | L4 | Both | `__sk_buff` | Good | Per-socket |
+| **TC ingress** | L2/L3 | Ingress | `__sk_buff` | 🚀 Fast | Complex filtering |
+| **TC egress** | L2/L3 | Egress | `__sk_buff` | 🚀 Fast | Rate limiting |
+| **Socket filter** | L4 | Ingress (socket RX path) | `__sk_buff` | Good | Per-socket |
 | **sockops** | Socket | Events | `bpf_sock_ops` | Good | TCP tuning |
 | **sk_msg** | Socket | Both | `sk_msg_md` | Good | Proxy, TLS |
 | **cgroup/sock** | cgroup | Both | `bpf_sock` | Good | Container net |
@@ -115,7 +115,7 @@ flowchart TB
 ```mermaid
 flowchart TB
     Q1{{"Need fastest possible\npacket processing?"}}
-    Q2{{"Need to modify/clone\npackets?"}}
+    Q2{{"Need egress processing\nor packet cloning?"}}
     Q3{{"Need full sk_buff\nmetadata?"}}
     
     Q1 -->|"Yes"| XDP["✅ Use XDP"]
@@ -176,7 +176,7 @@ struct xdp_md {
     __u32 data_meta;        // Metadata area (before data)
     __u32 ingress_ifindex;  // Interface packet arrived on
     __u32 rx_queue_index;   // RX queue
-    __u32 egress_ifindex;   // For XDP_REDIRECT (5.8+)
+    __u32 egress_ifindex;   // Egress device; readable only in XDP programs attached to a devmap entry (BPF_XDP_DEVMAP), i.e. after XDP_REDIRECT (5.8+)
 };
 ```
 
@@ -300,6 +300,8 @@ struct __sk_buff {
 ### TC Packet Modification
 
 ```c
+#include <bpf/bpf_endian.h>   // bpf_htons()
+
 SEC("tc")
 int modify_packet(struct __sk_buff *skb) {
     void *data = (void *)(long)skb->data;
@@ -314,13 +316,18 @@ int modify_packet(struct __sk_buff *skb) {
         return TC_ACT_OK;
     
     // Modify TTL
+    // bpf_l3_csum_replace() only accepts a size of 0, 2 or 4 - never 1 - so
+    // patch the whole 16-bit word that holds {ttl, protocol}.
     __u8 old_ttl = ip->ttl;
+    __u16 old_word = bpf_htons(((__u16)old_ttl << 8) | ip->protocol);
+    __u16 new_word = bpf_htons(((__u16)64 << 8) | ip->protocol);
+    
     ip->ttl = 64;
     
     // Update checksum (TC has helper!)
-    bpf_l3_csum_replace(skb, 
-        offsetof(struct iphdr, check) + sizeof(struct ethhdr),
-        old_ttl, ip->ttl, sizeof(__u8));
+    bpf_l3_csum_replace(skb,
+        sizeof(struct ethhdr) + offsetof(struct iphdr, check),
+        old_word, new_word, 2);
     
     // Set packet mark (for iptables)
     skb->mark = 0x1234;
@@ -417,6 +424,7 @@ flowchart TB
     
     subgraph maps["BPF Maps"]
         BM["backends_map\nVIP → Backend list"]
+        BC["backend_count\nVIP → live backend count"]
         CM["conntrack_map\n5-tuple → Backend"]
         SM["stats_map\nCounters"]
     end
@@ -428,6 +436,7 @@ flowchart TB
     PARSE --> HASH --> LOOKUP --> REWRITE --> TRACK
     
     LOOKUP <--> BM
+    LOOKUP <--> BC
     TRACK <--> CM
     REWRITE --> SM
     
@@ -478,6 +487,16 @@ struct {
     __type(value, struct backend[MAX_BACKENDS]);
 } backends SEC(".maps");
 
+// How many entries of the array above are actually populated for this VIP.
+// User space must write this count for each VIP whenever it updates `backends`;
+// a VIP present in `backends` but missing from `backend_count` is dropped.
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __type(key, struct vip_key);
+    __type(value, __u32);        /* number of populated backends for this VIP */
+    __uint(max_entries, 256);
+} backend_count SEC(".maps");
+
 // Connection tracking
 struct {
     __uint(type, BPF_MAP_TYPE_LRU_HASH);
@@ -516,8 +535,10 @@ static __always_inline void update_csum(__be16 *csum, __be32 old, __be32 new) {
     sum += new & 0xFFFF;
     sum += (new >> 16) & 0xFFFF;
     
-    while (sum > 0xFFFF)
-        sum = (sum & 0xFFFF) + (sum >> 16);
+    // Two unconditional folds - loop-free, so no bounded-loop verifier
+    // support needed. The maximum accumulated value here is 5 * 0xFFFF.
+    sum = (sum & 0xFFFF) + (sum >> 16);
+    sum = (sum & 0xFFFF) + (sum >> 16);
     
     *csum = ~sum;
 }
@@ -540,12 +561,18 @@ int xdp_lb(struct xdp_md *ctx) {
     if ((void *)(ip + 1) > data_end)
         return XDP_PASS;
     
+    // Variable IP header length - reject ihl < 5, or the L4 offset lands
+    // inside the IP header itself
+    __u8 ip_hdr_len = ip->ihl * 4;
+    if (ip_hdr_len < sizeof(*ip))
+        return XDP_PASS;
+    
     if (ip->protocol != IPPROTO_TCP && ip->protocol != IPPROTO_UDP)
         return XDP_PASS;
     
     // Parse L4
     __be16 src_port, dst_port;
-    void *l4_hdr = (void *)ip + (ip->ihl * 4);
+    void *l4_hdr = (void *)ip + ip_hdr_len;
     
     if (ip->protocol == IPPROTO_TCP) {
         struct tcphdr *tcp = l4_hdr;
@@ -585,12 +612,19 @@ int xdp_lb(struct xdp_md *ctx) {
     struct backend *backend = bpf_map_lookup_elem(&conntrack, &conn);
     
     if (!backend) {
-        // New connection - select backend
-        __u32 hash = hash_conn(&conn);
-        __u32 idx = hash % MAX_BACKENDS;
+        // New connection - select backend.
+        // Hash modulo the number of LIVE backends, not the array size:
+        // with MAX_BACKENDS = 64 and 3 real backends, "hash % MAX_BACKENDS"
+        // would land on an empty slot ~95% of the time and drop the packet.
+        __u32 *count = bpf_map_lookup_elem(&backend_count, &vip);
+        if (!count || *count == 0) {
+            update_stats(STAT_DROPPED, 1);
+            return XDP_DROP;
+        }
         
-        // Find valid backend (simplified - assumes sequential valid entries)
-        if (idx >= MAX_BACKENDS)
+        __u32 hash = hash_conn(&conn);
+        __u32 idx = hash % *count;      /* live backend count, not the array size */
+        if (idx >= MAX_BACKENDS)        /* keeps the array access provable */
             idx = 0;
         
         struct backend *selected = &(*backend_list)[idx];
@@ -611,7 +645,30 @@ int xdp_lb(struct xdp_md *ctx) {
     // Update IP checksum
     update_csum(&ip->check, old_daddr, ip->daddr);
     
-    // Update destination MAC
+    // daddr is in the TCP/UDP pseudo-header, so L4 must be fixed too
+    if (ip->protocol == IPPROTO_TCP) {
+        struct tcphdr *tcp = (void *)ip + ip_hdr_len;
+        if ((void *)(tcp + 1) > data_end)
+            return XDP_DROP;
+        update_csum(&tcp->check, old_daddr, ip->daddr);
+    } else {
+        struct udphdr *udp = (void *)ip + ip_hdr_len;
+        if ((void *)(udp + 1) > data_end)
+            return XDP_DROP;
+        if (udp->check) {           /* 0 means "no checksum" for IPv4 UDP */
+            update_csum(&udp->check, old_daddr, ip->daddr);
+            if (!udp->check)        /* a computed 0 must be sent as 0xFFFF */
+                udp->check = 0xFFFF;
+        }
+    }
+    
+    // Update L2 addresses - XDP_TX reuses this Ethernet header, so the
+    // source MAC must become ours or the switch re-learns the client's
+    // MAC on our port and return traffic breaks.
+    // Frame was addressed to the LB, so its current h_dest is our own MAC
+    __u8 lb_mac[6];
+    __builtin_memcpy(lb_mac, eth->h_dest, 6);
+    __builtin_memcpy(eth->h_source, lb_mac, 6);
     __builtin_memcpy(eth->h_dest, backend->mac, 6);
     
     // Update stats
@@ -641,34 +698,16 @@ int redirect_to_veth(struct xdp_md *ctx) {
 }
 ```
 
-### Using DEVMAP for Efficient Redirect
+### Choosing the Redirect Target
+
+DEVMAP and CPUMAP are covered in [Module 09: eBPF Maps Mastery](./09-ebpf-maps-mastery.md#special-maps-for-networking); here we only look at how XDP chooses the redirect target.
+
+`bpf_redirect_map()` is preferred over the plain `bpf_redirect()` above: the target lives in a map that user space can repopulate without reloading the program, and redirected frames are flushed in a batch at the end of the NAPI poll instead of one at a time. What is left for the XDP program is computing the key:
 
 ```c
-struct {
-    __uint(type, BPF_MAP_TYPE_DEVMAP);
-    __uint(max_entries, 64);
-    __type(key, __u32);
-    __type(value, __u32);
-} tx_ports SEC(".maps");
+// cpumap is a BPF_MAP_TYPE_CPUMAP defined as shown in Module 09
 
-SEC("xdp")
-int redirect_map(struct xdp_md *ctx) {
-    __u32 port = /* calculate from packet */;
-    return bpf_redirect_map(&tx_ports, port, 0);
-}
-```
-
-### CPU Steering with CPUMAP
-
-Balance traffic across CPUs:
-
-```c
-struct {
-    __uint(type, BPF_MAP_TYPE_CPUMAP);
-    __uint(max_entries, 128);
-    __type(key, __u32);
-    __type(value, __u32);
-} cpumap SEC(".maps");
+#define NUM_CPUS 4  /* must match the cpumap's max_entries */
 
 SEC("xdp")
 int steer_to_cpu(struct xdp_md *ctx) {
@@ -681,7 +720,7 @@ int steer_to_cpu(struct xdp_md *ctx) {
         return XDP_PASS;
     
     // Steer by source IP
-    __u32 cpu = ip->saddr % num_cpus;
+    __u32 cpu = bpf_ntohl(ip->saddr) % NUM_CPUS;
     return bpf_redirect_map(&cpumap, cpu, 0);
 }
 ```
@@ -717,7 +756,7 @@ See Module 06's firewall exercise for the complete implementation.
 
 ## Next Steps
 
-- **Module 12:** Security and observability with eBPF
+- **[Module 12: eBPF Security](./12-ebpf-security.md)** — security and observability with eBPF
 
 ---
 

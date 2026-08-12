@@ -11,22 +11,26 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"net"
 	"os"
 	"os/signal"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
 
 const addr = ":9999"
 
-// Message stats for monitoring
+// Message stats for monitoring.
+// The counters are touched by the receive loop and read by the stats
+// goroutine, so they must be atomic (plain ints are a data race).
 type Stats struct {
-	PacketsReceived int
-	BytesReceived   int
-	PacketsSent     int
+	PacketsReceived atomic.Int64
+	BytesReceived   atomic.Int64
+	PacketsSent     atomic.Int64
 }
 
 func main() {
@@ -51,7 +55,7 @@ func main() {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
-	// Stats tracking
+	// Stats tracking (pointer: atomic types must never be copied)
 	stats := &Stats{}
 
 	// Stats printer goroutine
@@ -62,11 +66,11 @@ func main() {
 			select {
 			case <-ticker.C:
 				log.Printf("📊 Stats: %d packets received, %d bytes, %d responses sent",
-					stats.PacketsReceived, stats.BytesReceived, stats.PacketsSent)
+					stats.PacketsReceived.Load(), stats.BytesReceived.Load(), stats.PacketsSent.Load())
 			case <-sigChan:
 				log.Println("\n🛑 Shutting down...")
-				log.Printf("📊 Final Stats: %d packets, %d bytes",
-					stats.PacketsReceived, stats.BytesReceived)
+				log.Printf("📊 Final Stats: %d packets, %d bytes, %d responses sent",
+					stats.PacketsReceived.Load(), stats.BytesReceived.Load(), stats.PacketsSent.Load())
 				conn.Close()
 				os.Exit(0)
 			}
@@ -80,20 +84,18 @@ func main() {
 	for {
 		n, clientAddr, err := conn.ReadFromUDP(buffer)
 		if err != nil {
-			// Check if it's a shutdown-related error (connection closed)
-			select {
-			case <-sigChan:
-				// Already handled in goroutine
-				return
-			default:
-				log.Printf("Read error: %v", err)
-				continue
+			// The shutdown goroutine closes the socket, which makes every
+			// further read fail immediately - stop instead of busy-looping.
+			if errors.Is(err, net.ErrClosed) {
+				return // listener closed during shutdown
 			}
+			log.Printf("Read error: %v", err)
+			continue
 		}
 
 		// Update stats
-		stats.PacketsReceived++
-		stats.BytesReceived += n
+		stats.PacketsReceived.Add(1)
+		stats.BytesReceived.Add(int64(n))
 
 		// Get message content
 		message := string(buffer[:n])
@@ -106,6 +108,6 @@ func main() {
 			log.Printf("Write error: %v", err)
 			continue
 		}
-		stats.PacketsSent++
+		stats.PacketsSent.Add(1)
 	}
 }

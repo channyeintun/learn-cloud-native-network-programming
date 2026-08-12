@@ -421,7 +421,11 @@ struct {
 SEC("xdp")
 int xdp_dispatcher(struct xdp_md *ctx) {
     void *data = (void *)(long)ctx->data;
+    void *data_end = (void *)(long)ctx->data_end;
+    
     struct iphdr *ip = data + sizeof(struct ethhdr);
+    if ((void *)(ip + 1) > data_end)
+        return XDP_PASS;
     
     // Tail call based on protocol
     bpf_tail_call(ctx, &handlers, ip->protocol);
@@ -451,7 +455,7 @@ Store maps inside maps for dynamic configuration:
 
 ```c
 // Inner map definition (template)
-struct {
+struct inner_map {
     __uint(type, BPF_MAP_TYPE_HASH);
     __uint(max_entries, 100);
     __type(key, __u32);
@@ -497,7 +501,7 @@ Persist maps in the BPF filesystem for sharing between programs:
 ls /sys/fs/bpf/
 
 # Create pinned map
-sudo bpftool map create /sys/fs/bpf/my_map type hash key 4 value 8 entries 100
+sudo bpftool map create /sys/fs/bpf/my_map type hash key 4 value 8 entries 100 name my_map
 
 # Use from bpftool
 sudo bpftool map update pinned /sys/fs/bpf/my_map key 0x01 0x00 0x00 0x00 value 0x2a 0x00 0x00 0x00 0x00 0x00 0x00 0x00
@@ -529,6 +533,7 @@ Create an XDP rate limiter using maps to track and limit packets per source IP.
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_endian.h>
 
+#define ETH_P_IP   0x0800
 #define RATE_LIMIT 100  // packets per second
 #define WINDOW_NS  1000000000  // 1 second in nanoseconds
 
@@ -708,9 +713,9 @@ func printStats(m *ebpf.Map) {
 
 ## Next Steps
 
-- **Module 10:** CO-RE for portable eBPF programs
-- **Module 11:** Complete networking stack guide
-- **Module 12:** Security and observability
+- **[Module 10: CO-RE & BTF Portability](./10-core-btf-portability.md)** — CO-RE for portable eBPF programs
+- **[Module 11: eBPF Networking Guide](./11-ebpf-networking-guide.md)** — complete networking stack guide
+- **[Module 12: eBPF Security](./12-ebpf-security.md)** — security and observability
 
 ---
 

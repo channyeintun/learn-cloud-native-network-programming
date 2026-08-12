@@ -1,10 +1,10 @@
 # Go Network Programming Exercises
 
-Hands-on exercises for Module 5: Go Network Programming.
+Hands-on exercises for [Module 5: Go Network Programming](../teaching/05-go-networking.md).
 
 ## Prerequisites
 
-- Go 1.21+ installed
+- Go 1.24+ installed (the module declares `go 1.24.0`)
 - For Exercise 04 (ICMP Ping): root/sudo access
 
 ## Exercises
@@ -15,7 +15,7 @@ Hands-on exercises for Module 5: Go Network Programming.
 | 02 | [UDP Server](./02-udp-server) | UDP echo server with stats tracking | `go run ./02-udp-server` |
 | 03 | [Port Scanner](./03-port-scanner) | Concurrent port scanner with worker pool | `go run ./03-port-scanner -host scanme.nmap.org` |
 | 04 | [ICMP Ping](./04-icmp-ping) | ICMP ping with RTT statistics | `sudo go run ./04-icmp-ping -host 8.8.8.8` |
-| 05 | [Health Checker](./05-health-checker) | HTTP health monitor for multiple endpoints | `go run ./05-health-checker` |
+| 05 | [Health Checker](./05-health-checker) | HTTP health monitor for multiple endpoints | `go run ./05-health-checker -config 05-health-checker/endpoints.json` |
 
 ## Quick Start
 
@@ -49,6 +49,7 @@ Each exercise teaches specific networking concepts:
 ```
 exercises/
 ├── go.mod
+├── go.sum
 ├── README.md
 ├── 01-tcp-echo/
 │   └── main.go
@@ -59,5 +60,6 @@ exercises/
 ├── 04-icmp-ping/
 │   └── main.go
 └── 05-health-checker/
-    └── main.go
+    ├── main.go
+    └── endpoints.json
 ```
